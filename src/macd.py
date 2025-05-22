@@ -1,10 +1,10 @@
-from hyperliquid.exchange import Exchange
 import pandas as pd
 from ta.trend import MACD
 import time
 import ccxt
 import datetime
 import math
+import requests
 
 # --- CONFIG ---
 SYMBOL = "FARTCOIN/USDC:USDC"
@@ -13,6 +13,17 @@ TRADE_SIZE_PCT = 0.1
 INITIAL_CASH = 1000
 TRAILING_STOP_PCT = 0.05
 TAKE_PROFIT_PCT = 0.1
+
+TELEGRAM_BOT_TOKEN = "7656305504:AAH5WHM4G2rwcWll1D2PRe5KJpu_YUaYPwU"
+TELEGRAM_CHAT_ID = 1517594294
+
+def send_telegram_message(message):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
+    try:
+        requests.post(url, data=payload)
+    except Exception as e:
+        print(f"Telegram send error: {e}")
 
 # --- INIT CCXT EXCHANGE FOR OHLCV ---
 def init_ccxt_exchange():
@@ -76,13 +87,20 @@ def simulate_trade(signal, price):
             portfolio['entry_price'] = None
             portfolio['highest_price'] = None
             pnl = upnl
-            print(f"💰 TAKE PROFIT @ {price:.4f} | PNL {pnl:.2f}")
+            msg = f"💰 TAKE PROFIT @ {price:.4f} | PNL {pnl:.2f}"
+            print(msg)
+            send_telegram_message(msg)
+            send_telegram_message(f"Total: {portfolio['cash']}")
         else:
             drop_pct = (portfolio['highest_price'] - price) / portfolio['highest_price']
             if drop_pct >= TRAILING_STOP_PCT:
                 pnl = upnl
                 portfolio['cash'] += pos_value
-                print(f"🛑 STOP HIT @ {price:.2f} | PNL: {pnl:.2f}")
+                msg = f"🛑 STOPPED @ {price:.2f} | PNL {pnl:.2f}"
+                print(msg)
+                send_telegram_message(msg)
+                send_telegram_message(f"Total: {portfolio['cash']}")
+
                 portfolio['position'] = 0
                 portfolio['entry_price'] = None
                 portfolio['highest_price'] = None
@@ -96,7 +114,9 @@ def simulate_trade(signal, price):
         portfolio['cash'] -= cost
         portfolio['entry_price'] = price
         portfolio['highest_price'] = price
-        print(f"📈 LONG OPENED @ {price:.4f}")
+        msg = f"📈 LONG OPENED @ {price:.4f}"
+        print(msg)
+        send_telegram_message(msg)
 
 # --- Backtest ---
 def backtest():
@@ -123,5 +143,5 @@ def paper_trader():
 
 # --- RUN ---
 if __name__ == "__main__":
-    backtest()
-    # paper_trader()
+    # backtest()
+    paper_trader()
