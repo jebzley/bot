@@ -20,11 +20,12 @@ class TradingBot:
     def __init__(self, config: TradingConfig):
         self.config = config
         self.portfolio = Portfolio(config.INITIAL_CASH)
-        self.notifier = TelegramNotifier()
+        self.notifier = TelegramNotifier(bot_instance=self)  
         self.market_regime = MarketRegime(config)
         self.exchange = None
         self.is_running = False
-        self.trade_history = []  # Track trade history for metrics
+        self.trade_history = []
+        self.last_price = None 
         
     def init_exchange(self) -> ccxt.hyperliquid:
         """Initialize CCXT exchange"""
@@ -723,6 +724,22 @@ class TradingBot:
         if self.portfolio.daily_pnl < -self.portfolio.initial_cash * self.config.MAX_DAILY_LOSS_PCT:
             return True
         return False
+    
+    def get_current_price(self) -> Optional[float]:
+        try:
+            df = self.get_historical_ohlcv(
+                self.config.SYMBOL,
+                self.config.INTERVAL,
+                5
+            )
+            if df is not None and len(df) > 0:
+                price = df.iloc[-1]['close']
+                self.last_price = price  # Store for status updates
+                return price
+            return None
+        except Exception as e:
+            logger.error(f"Error getting current price: {e}")
+            return None
         
     def calculate_performance_metrics(self) -> Dict[str, float]:
         """Calculate comprehensive performance metrics"""
@@ -853,6 +870,9 @@ class TradingBot:
         logger.info("Starting paper trader...")
         self.is_running = True
         
+        # Start Telegram command polling
+        self.notifier.start_command_polling()
+        
         try:
             while self.is_running:
                 try:
@@ -873,6 +893,9 @@ class TradingBot:
                         time.sleep(self.config.SLEEP_INTERVAL)
                         continue
                     
+                    # Store current price for status updates
+                    self.last_price = df.iloc[-1]['close']
+                    
                     # Detect market regime
                     regime = self.market_regime.detect_market_regime(df)
                     
@@ -887,8 +910,8 @@ class TradingBot:
                     if len(self.trade_history) > 0 and len(self.trade_history) % 10 == 0:
                         metrics = self.calculate_performance_metrics()
                         logger.info(f"Performance Update - Trades: {metrics['total_trades']}, "
-                                  f"Win Rate: {metrics['win_rate']:.2%}, "
-                                  f"Profit Factor: {metrics['profit_factor']:.2f}")
+                                f"Win Rate: {metrics['win_rate']:.2%}, "
+                                f"Profit Factor: {metrics['profit_factor']:.2f}")
                     
                     time.sleep(self.config.SLEEP_INTERVAL)
                     
@@ -904,13 +927,15 @@ class TradingBot:
         finally:
             self.is_running = False
             
+            self.notifier.stop_command_polling()
+            
             # Final performance report
             if self.trade_history:
                 metrics = self.calculate_performance_metrics()
                 final_report = (f"📊 FINAL PERFORMANCE REPORT:\n"
-                              f"Total Trades: {metrics.get('total_trades', 0)}\n"
-                              f"Win Rate: {metrics.get('win_rate', 0):.2%}\n"
-                              f"Profit Factor: {metrics.get('profit_factor', 0):.2f}")
+                            f"Total Trades: {metrics.get('total_trades', 0)}\n"
+                            f"Win Rate: {metrics.get('win_rate', 0):.2%}\n"
+                            f"Profit Factor: {metrics.get('profit_factor', 0):.2f}")
                 logger.info(final_report)
                 self.notifier.send_message(final_report)
             
@@ -919,4 +944,5 @@ class TradingBot:
     def stop(self):
         """Stop the trading bot"""
         self.is_running = False
+        self.notifier.stop_command_polling()
         logger.info("Stop signal sent to trading bot")
