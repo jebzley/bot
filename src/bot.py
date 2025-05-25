@@ -581,8 +581,8 @@ class TradingBot:
                         self.close_position(price, "🛑 TRAILING STOP (LONG)")
                         return True
                 
-                # Signal-based exits - exit on opposite signal regardless of profit
-                if signal == 'sell':
+                # Signal-based exits - exit on opposite signal if we're in profit
+                if signal == 'sell' and self.portfolio.get_unrealized_pnl(price) > 0:
                     self.close_position(price, f"📉 SIGNAL EXIT (LONG) - {regime.upper()}")
                     return True
                 
@@ -621,8 +621,8 @@ class TradingBot:
                         self.close_position(price, "🛑 TRAILING STOP (SHORT)")
                         return True
                 
-                # Signal-based exits - exit on opposite signal regardless of profit
-                if signal == 'buy':
+                # Signal-based exits - exit on opposite signal if we're in profit
+                if signal == 'buy' and self.portfolio.get_unrealized_pnl(price) > 0:
                     self.close_position(price, f"📈 SIGNAL EXIT (SHORT) - {regime.upper()}")
                     return True
                 
