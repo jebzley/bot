@@ -550,7 +550,7 @@ class TradingBot:
             # Time-based stop loss - only for positions open too long
             if self.portfolio.entry_time:
                 time_in_position = datetime.datetime.now() - self.portfolio.entry_time
-                if time_in_position > datetime.timedelta(hours=self.config.MAX_POSITION_DURATION):
+                if time_in_position > datetime.timedelta(hours=self.config.MAX_POSITION_DURATION_HOURS):
                     if self.portfolio.get_unrealized_pnl(price) < -self.portfolio.cash * 0.01:  # Only if losing more than 1%
                         self.close_position(price, "⏰ TIME STOP")
                         return True

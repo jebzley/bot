@@ -11,8 +11,7 @@ class TradingConfig:
     TAKE_PROFIT_PCT: float = 0.03 
     STOP_LOSS_PCT: float = 0.02 
     
-    # Position time limit (in hours)
-    MAX_POSITION_DURATION: int = 4
+    MAX_POSITION_DURATION_HOURS: int = 4
     
     # Drawdown management
     MAX_DAILY_LOSS_PCT: float = 0.05  
@@ -29,7 +28,7 @@ class TradingConfig:
     MULTIPLIER_STRONG: float = 1.0
     MULTIPLIER_NORMAL: float = 0.7
     
-    # Signal scoring thresholds - LOWERED for more trades
+    # Signal scoring thresholds
     BUY_SIGNAL_THRESHOLD: int = 15  
     SELL_SIGNAL_THRESHOLD: int = -15  
     
