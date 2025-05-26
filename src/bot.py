@@ -588,7 +588,7 @@ class TradingBot:
                     return True
                 
                 # Also exit if momentum is clearly shifting (MACD histogram declining)
-                if len(df) >= 3 and self.portfolio.entry_time >= datetime.datetime.now() - datetime.timedelta(minutes=15):
+                if len(df) >= 3 and self.portfolio.entry_time <= datetime.datetime.now() - datetime.timedelta(minutes=15):
                     macd_hist_current = df.iloc[-1].get('macd_hist', 0)
                     macd_hist_prev = df.iloc[-2].get('macd_hist', 0)
                     macd_hist_prev2 = df.iloc[-3].get('macd_hist', 0)
@@ -628,7 +628,7 @@ class TradingBot:
                     return True
                 
                 # Also exit if momentum is clearly shifting (MACD histogram rising)
-                if len(df) >= 3 and self.portfolio.entry_time >= datetime.datetime.now() - datetime.timedelta(minutes=15):
+                if len(df) >= 3 and self.portfolio.entry_time <= datetime.datetime.now() - datetime.timedelta(minutes=15):
                     macd_hist_current = df.iloc[-1].get('macd_hist', 0)
                     macd_hist_prev = df.iloc[-2].get('macd_hist', 0)
                     macd_hist_prev2 = df.iloc[-3].get('macd_hist', 0)
