@@ -588,14 +588,14 @@ class TradingBot:
                     return True
                 
                 # Also exit if momentum is clearly shifting (MACD histogram declining)
-                if len(df) >= 3:
+                if len(df) >= 3 and self.portfolio.entry_time >= datetime.datetime.now() - datetime.timedelta(minutes=15):
                     macd_hist_current = df.iloc[-1].get('macd_hist', 0)
                     macd_hist_prev = df.iloc[-2].get('macd_hist', 0)
                     macd_hist_prev2 = df.iloc[-3].get('macd_hist', 0)
                     
                     if (macd_hist_current < macd_hist_prev < macd_hist_prev2 and 
                         macd_hist_current < 0 and 
-                        self.portfolio.get_unrealized_pnl(price) > 0):
+                        self.portfolio.get_unrealized_pnl(price) > 0 ):
                         self.close_position(price, "📊 MOMENTUM EXIT (LONG)")
                         return True
             
@@ -628,7 +628,7 @@ class TradingBot:
                     return True
                 
                 # Also exit if momentum is clearly shifting (MACD histogram rising)
-                if len(df) >= 3:
+                if len(df) >= 3 and self.portfolio.entry_time >= datetime.datetime.now() - datetime.timedelta(minutes=15):
                     macd_hist_current = df.iloc[-1].get('macd_hist', 0)
                     macd_hist_prev = df.iloc[-2].get('macd_hist', 0)
                     macd_hist_prev2 = df.iloc[-3].get('macd_hist', 0)

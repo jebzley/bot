@@ -1,3 +1,5 @@
+from datetime import datetime
+from typing import Optional
 class Portfolio:
     """Manage portfolio state and calculations"""
     
@@ -6,7 +8,7 @@ class Portfolio:
         self.cash = initial_cash
         self.initial_cash = initial_cash
         self.entry_price = None
-        self.entry_time = None  # Added for time-based stops
+        self.entry_time: Optional[datetime] = None  # Added for time-based stops
         self.highest_price = None
         self.lowest_price = None
         self.position_type = None  # 'long', 'short', or None
