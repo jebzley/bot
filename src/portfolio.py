@@ -30,7 +30,7 @@ class Portfolio:
         self.daily_pnl = 0.0
         self.daily_trades = []
         self.consecutive_losses = 0
-        self.last_trade_date = None
+        self.last_trade_dt: datetime = None
         self.in_drawdown = False
     
     def initialize_portfolio(self, initial_cash = 1000.0):

@@ -60,6 +60,12 @@ class TradingConfig:
     BB_STD: float = 2.0
     BB_ZSCORE_THRESHOLD: float = -1.0
     
+    # Live trading safety limits
+    MAX_POSITION_VALUE: float = 100.0  # Maximum $100 position initially
+    LIVE_TRADE_COOLDOWN: int = 60  # Seconds between trades
+    MAX_DAILY_TRADES: int = 10  # Maximum trades per day
+    REQUIRE_CONFIRMATION: bool = False  # Set to True to require Telegram confirmation
+    
     SLEEP_INTERVAL: int = 20
     HISTORICAL_LIMIT: int = 300
     BACKTEST_LIMIT: int = 21600
