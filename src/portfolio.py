@@ -5,6 +5,7 @@ from typing import Optional, Literal
 from ccxt import hyperliquid
 from config import TradingConfig
 from logger import logger
+from telegram import TelegramNotifier
 
 class Portfolio:
     """Manage portfolio state and calculations"""
@@ -36,27 +37,20 @@ class Portfolio:
         if not self.is_live:
             self.cash = initial_cash
             self.initial_cash = initial_cash
+            self.notifier = TelegramNotifier()
         else:
             try:
+                
+                self.sync_with_exchange()
+                
                 balance = self.exchange.fetch_balance()
-                position = self.exchange.fetch_position(self.config.SYMBOL)
-                if position:
-                    self.position = position['contracts']
-                    self.entry_price = position['entryPrice']
-                    self.position_type = position['side']
-                    self.entry_time = datetime.fromisoformat(position['datetime'])
-                    self.position_type = 'long' if self.position > 0 else 'short' if self.position < 0 else None
-                    self.stop_loss_price = position['entryPrice'] - (self.config.STOP_LOSS_PCT * position['entryPrice']) if self.position_type == 'long' else position['entryPrice'] + (self.config.STOP_LOSS_PCT * position['entryPrice']) 
-
                 usdc_balance = balance['USDC']['free']
-                self.cash = usdc_balance
                 self.initial_cash = usdc_balance
                 logger.info(f"Initialized portfolio with USDC balance: ${usdc_balance:.2f}")
             except Exception as e:
                 logger.error(f"Failed to initialize portfolio: {e}")
                 raise
             
-
     def check_account_balance(self):
         try:
             if not self.is_live:
@@ -68,12 +62,57 @@ class Portfolio:
             logger.info(f"Account USDC Balance: ${usdc_balance:.2f}")
             self.notifier.send_message(f"💰 Account Balance: ${usdc_balance:.2f}")
             
-            if abs(self.portfolio.cash - usdc_balance) > 1:
-                if self.portfolio.position == 0:  
-                    self.portfolio.cash = usdc_balance
+            if abs(self.cash - usdc_balance) > 1:
+                if self.position == 0:  
+                    self.cash = usdc_balance
                     
         except Exception as e:
             logger.error(f"Failed to check account balance: {e}")
+
+    def sync_with_exchange(self):
+        try:
+            if not self.is_live:
+                return
+            
+            balance = self.exchange.fetch_balance()
+            usdc_balance = balance['USDC']['free']
+            self.cash = usdc_balance
+                
+            # Fetch positions from exchange
+            position = self.exchange.fetch_position(self.config.SYMBOL)
+            
+            if position:
+                exchange_size = float(position['contracts'])
+                exchange_side = position['side']
+                
+                if exchange_size > 0 and exchange_side:
+                    self.position = exchange_size if exchange_side == 'long' else -exchange_size
+                    self.entry_price = float(position['averagePrice'])
+                    self.position_type = exchange_side
+                    self.entry_time = datetime.datetime.now()  # Approximate
+                    
+                    logger.info(f"Position synced: {self.position} @ {self.entry_price}")
+                    self.notifier.send_message(f"📊 Position synced: {exchange_side.upper()} {exchange_size} @ ${self.entry_price:.4f}")
+                else:
+                    # No position on exchange
+                    if self.position != 0:
+                        logger.warning("Local position exists but exchange shows no position - resetting")
+                        self.position = 0
+                        self.entry_price = None
+                        self.position_type = None
+                        self.entry_time = None
+            else:
+                # No positions returned
+                if self.position != 0:
+                    logger.warning("No positions on exchange but local position exists - resetting")
+                    self.position = 0
+                    self.entry_price = None
+                    self.position_type = None
+                    self.entry_time = None
+                    
+        except Exception as e:
+            logger.error(f"Failed to sync position: {e}")
+            # self.notifier.send_message(f"⚠️ Failed to sync position: {str(e)}")
 
     
     def get_position_value(self, current_price: float) -> float:
