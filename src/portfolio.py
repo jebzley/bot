@@ -7,9 +7,7 @@ from config import TradingConfig
 from logger import logger
 from telegram import TelegramNotifier
 
-class Portfolio:
-    """Manage portfolio state and calculations"""
-    
+class Portfolio:    
     def __init__(self, exchange: Optional[hyperliquid]):
         self.is_live = os.getenv("TRADING_MODE", "backtest").lower() == "live"
         self.exchange = exchange
@@ -24,7 +22,9 @@ class Portfolio:
         self.lowest_price: float = None
         self.position_type: Literal['long', 'short', None] = None 
         self.stop_loss_price: Optional[float] = None  
-        self.take_profit_price: Optional[float] = None  
+        self.take_profit_price: Optional[float] = None
+        self.unrealized_pnl = 0.0
+        self.position_value = 0.0
         
         # Drawdown tracking
         self.daily_pnl = 0.0
@@ -89,10 +89,11 @@ class Portfolio:
                     self.position = exchange_size if exchange_side == 'long' else -exchange_size
                     self.entry_price = float(position['averagePrice'])
                     self.position_type = exchange_side
-                    self.entry_time = datetime.datetime.now()  # Approximate
+                    self.entry_time = datetime.fromisoformat(position['datetime'])
+                    self.unrealized_pnl = position['unrealizedPnl']
+                    self.position_value = position['notional']
                     
-                    logger.info(f"Position synced: {self.position} @ {self.entry_price}")
-                    self.notifier.send_message(f"📊 Position synced: {exchange_side.upper()} {exchange_size} @ ${self.entry_price:.4f}")
+                    logger.info(f"Portfolio synced: {self.position} @ {self.entry_price}")
                 else:
                     # No position on exchange
                     if self.position != 0:
@@ -101,6 +102,8 @@ class Portfolio:
                         self.entry_price = None
                         self.position_type = None
                         self.entry_time = None
+                        self.unrealized_pnl = 0.0
+                        self.position_value = 0.0
             else:
                 # No positions returned
                 if self.position != 0:
@@ -109,13 +112,18 @@ class Portfolio:
                     self.entry_price = None
                     self.position_type = None
                     self.entry_time = None
+                    self.unrealized_pnl = 0.0
+                    self.position_value = 0.0
                     
         except Exception as e:
             logger.error(f"Failed to sync position: {e}")
             # self.notifier.send_message(f"⚠️ Failed to sync position: {str(e)}")
-
-    
+ 
     def get_position_value(self, current_price: float) -> float:
+        if self.is_live:
+            self.sync_with_exchange()
+            return self.position_value
+        
         if self.position == 0:
             return 0.0
         if self.position_type == 'long':
@@ -125,13 +133,21 @@ class Portfolio:
         return 0.0
     
     def get_unrealized_pnl(self, current_price: float) -> float:
+        if self.is_live:
+            self.sync_with_exchange()
+            return self.unrealized_pnl
+        
         if not self.entry_price or self.position == 0:
             return 0.0
         
         if self.position_type == 'long':
-            return (current_price - self.entry_price) * self.position
+            upnl = (current_price - self.entry_price) * self.position
+            self.unrealized_pnl = upnl
+            return upnl
         elif self.position_type == 'short':
-            return (self.entry_price - current_price) * abs(self.position)
+            upnl = (self.entry_price - current_price) * abs(self.position)
+            self.unrealized_pnl = upnl
+            return upnl
         return 0.0
     
     def get_total_value(self, current_price: float) -> float:
