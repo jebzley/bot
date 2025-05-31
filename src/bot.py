@@ -1,327 +1,29 @@
 import pandas as pd
-from ta.trend import MACD, ADXIndicator, EMAIndicator
-from ta.volatility import BollingerBands, AverageTrueRange
-from ta.momentum import RSIIndicator
 import time
-import ccxt
 import datetime
 import math
-from typing import Optional, Tuple, Dict
+from typing import Optional, Dict
 
 from config import TradingConfig
 from portfolio import Portfolio
 from telegram import TelegramNotifier
-from regime import MarketRegime
+from ta import TechnicalAnalysis
+from exchange import HyperliquidExchange
 from logger import logger
 
 class TradingBot:
     """Main trading bot class"""
     
-    def __init__(self, config: TradingConfig):
+    def __init__(self, config: TradingConfig, exchange: HyperliquidExchange):
         self.config = config
         self.portfolio = Portfolio(config.INITIAL_CASH)
         self.notifier = TelegramNotifier(bot_instance=self)  
-        self.market_regime = MarketRegime(config)
+        self.ta = TechnicalAnalysis(config, exchange)
         self.exchange = None
         self.is_running = False
         self.trade_history = []
         self.last_price = None 
         
-    def init_exchange(self) -> ccxt.hyperliquid:
-        """Initialize CCXT exchange"""
-        try:
-            exchange = ccxt.hyperliquid({
-                'enableRateLimit': True,
-                'options': {
-                    'defaultType': 'future',
-                },
-                'timeout': 30000,
-            })
-            logger.info("Exchange initialized successfully")
-            return exchange
-        except Exception as e:
-            logger.error(f"Failed to initialize exchange: {e}")
-            raise
-    
-    def get_historical_ohlcv(self, symbol: str, interval: str, limit: int) -> Optional[pd.DataFrame]:
-        """Fetch historical OHLCV data with enhanced validation"""
-        try:
-            if not self.exchange:
-                self.exchange = self.init_exchange()
-            
-            fetch_limit = min(limit + 100, 1000)
-            ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe=interval, limit=fetch_limit)
-            
-            if not ohlcv:
-                logger.error("No OHLCV data received")
-                return None
-                
-            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-            
-            initial_len = len(df)
-            logger.debug(f"Fetched {initial_len} candles")
-            
-            # Data validation
-            ohlcv_nan = df[['open', 'high', 'low', 'close', 'volume']].isnull().sum().sum()
-            if ohlcv_nan > 0:
-                logger.warning(f"OHLCV data contains {ohlcv_nan} NaN values")
-                df[['open', 'high', 'low', 'close', 'volume']] = df[['open', 'high', 'low', 'close', 'volume']].fillna(method='ffill')
-                df = df.dropna()
-                logger.info(f"After OHLCV cleanup: {len(df)} rows remaining")
-            
-            # Remove duplicates
-            duplicates = df.duplicated(subset=['timestamp']).sum()
-            if duplicates > 0:
-                logger.warning(f"Found {duplicates} duplicate timestamps, removing...")
-                df = df.drop_duplicates(subset=['timestamp'], keep='last')
-            
-            df = df.sort_values('timestamp').reset_index(drop=True)
-            
-            result = df.tail(limit)
-            logger.debug(f"Returning {len(result)} clean candles")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Failed to fetch OHLCV data: {e}")
-            return None
-    
-    def apply_indicators(self, df: pd.DataFrame) -> Optional[pd.DataFrame]:
-        """Apply all technical indicators including new ones"""
-        try:
-            required_periods = max(
-                self.config.MACD_SLOW + self.config.MACD_SIGNAL,
-                self.config.ADX_PERIOD,
-                self.config.EMA_PERIOD,
-                self.config.BB_PERIOD,
-                self.config.RSI_PERIOD,
-                self.config.ATR_PERIOD,
-                self.config.VOLUME_SMA_PERIOD
-            ) + 50
-            
-            if len(df) < required_periods:
-                logger.error(f"Insufficient data for indicators: need {required_periods}, have {len(df)}")
-                return None
-            
-            df_result = df.copy()
-            
-            # MACD
-            macd = MACD(
-                close=df_result['close'], 
-                window_slow=self.config.MACD_SLOW, 
-                window_fast=self.config.MACD_FAST, 
-                window_sign=self.config.MACD_SIGNAL
-            )
-            df_result.loc[:, 'macd'] = macd.macd()
-            df_result.loc[:, 'macd_signal'] = macd.macd_signal()
-            df_result.loc[:, 'macd_hist'] = macd.macd_diff()
-            
-            # RSI
-            rsi = RSIIndicator(close=df_result['close'], window=self.config.RSI_PERIOD)
-            df_result.loc[:, 'rsi'] = rsi.rsi()
-            
-            # ATR
-            atr = AverageTrueRange(
-                high=df_result['high'], 
-                low=df_result['low'], 
-                close=df_result['close'],
-                window=self.config.ATR_PERIOD
-            )
-            df_result.loc[:, 'atr'] = atr.average_true_range()
-            
-            # Bollinger Bands
-            bb = BollingerBands(
-                close=df_result['close'], 
-                window=self.config.BB_PERIOD, 
-                window_dev=self.config.BB_STD
-            )
-            df_result.loc[:, 'bb_upper'] = bb.bollinger_hband()
-            df_result.loc[:, 'bb_middle'] = bb.bollinger_mavg()
-            df_result.loc[:, 'bb_lower'] = bb.bollinger_lband()
-            
-            # EMA
-            ema = EMAIndicator(close=df_result['close'], window=self.config.EMA_PERIOD)
-            df_result.loc[:, 'ema_20'] = ema.ema_indicator()
-            
-            # ADX
-            adx_indicator = ADXIndicator(
-                high=df_result['high'], 
-                low=df_result['low'], 
-                close=df_result['close'], 
-                window=self.config.ADX_PERIOD
-            )
-            df_result.loc[:, 'adx'] = adx_indicator.adx()
-            
-            # Volume indicators
-            df_result.loc[:, 'volume_sma'] = df_result['volume'].rolling(window=self.config.VOLUME_SMA_PERIOD).mean()
-            df_result.loc[:, 'volume_ratio'] = df_result['volume'] / df_result['volume_sma']
-            
-            # RSI Divergence Detection
-            df_result = self.detect_rsi_divergence(df_result)
-            
-            # Clean NaN values
-            initial_len = len(df_result)
-            df_result = df_result.dropna()
-            dropped_rows = initial_len - len(df_result)
-            
-            if dropped_rows > 0:
-                logger.debug(f"Dropped {dropped_rows} indicator initialization rows, {len(df_result)} trading rows remaining")
-            
-            min_required = 50
-            if len(df_result) < min_required:
-                logger.error(f"Insufficient data after indicator calculation: {len(df_result)} < {min_required}")
-                return None
-            
-            logger.debug(f"Indicator calculation successful: {len(df_result)} valid rows")
-            return df_result
-            
-        except Exception as e:
-            logger.error(f"Failed to calculate indicators: {e}")
-            return None
-    
-    def detect_rsi_divergence(self, df: pd.DataFrame, lookback: int = 14) -> pd.DataFrame:
-        """Detect RSI divergence"""
-        try:
-            df_copy = df.copy()
-            df_copy['rsi_divergence'] = 0
-            
-            if len(df_copy) < lookback + 5:
-                return df_copy
-            
-            for i in range(lookback + 5, len(df_copy)):
-                # Get recent data
-                recent_data = df_copy.iloc[i-lookback:i]
-                
-                # Find price peaks and troughs
-                price_highs = recent_data['high'].rolling(window=3).max()
-                price_lows = recent_data['low'].rolling(window=3).min()
-                
-                # Find RSI peaks and troughs
-                rsi_highs = recent_data['rsi'].rolling(window=3).max()
-                rsi_lows = recent_data['rsi'].rolling(window=3).min()
-                
-                # Check for bullish divergence (price lower low, RSI higher low)
-                if (recent_data['low'].iloc[-1] < price_lows.iloc[-5] and 
-                    recent_data['rsi'].iloc[-1] > rsi_lows.iloc[-5] and
-                    recent_data['rsi'].iloc[-1] < self.config.RSI_OVERSOLD + 10):
-                    df_copy.loc[df_copy.index[i], 'rsi_divergence'] = 1
-                
-                # Check for bearish divergence (price higher high, RSI lower high)
-                elif (recent_data['high'].iloc[-1] > price_highs.iloc[-5] and 
-                      recent_data['rsi'].iloc[-1] < rsi_highs.iloc[-5] and
-                      recent_data['rsi'].iloc[-1] > self.config.RSI_OVERBOUGHT - 10):
-                    df_copy.loc[df_copy.index[i], 'rsi_divergence'] = -1
-            
-            return df_copy
-            
-        except Exception as e:
-            logger.error(f"Error detecting RSI divergence: {e}")
-            df['rsi_divergence'] = 0
-            return df
-    
-    def get_signal_score(self, df: pd.DataFrame) -> Tuple[Optional[str], str, int]:
-        """Generate trading signal using scoring system"""
-        try:
-            if len(df) < 2:
-                return None, "Insufficient data", 0
-            
-            score = 0
-            signals = []
-            
-            # Get market regime for context
-            regime = self.market_regime.detect_market_regime(df)
-            
-            # MACD signal (+/- 20 points)
-            current_macd = df.iloc[-1]['macd']
-            current_signal = df.iloc[-1]['macd_signal']
-            prev_macd = df.iloc[-2]['macd']
-            prev_signal = df.iloc[-2]['macd_signal']
-            
-            if not pd.isna(current_macd) and not pd.isna(current_signal):
-                if current_macd > current_signal and prev_macd <= prev_signal:
-                    score += 20
-                    signals.append("MACD_BUY")
-                elif current_macd < current_signal and prev_macd >= prev_signal:
-                    score -= 20
-                    signals.append("MACD_SELL")
-            
-            # RSI signal (+/- 15 points) - only in ranging markets
-            current_rsi = df.iloc[-1]['rsi']
-            if not pd.isna(current_rsi):
-                if current_rsi < self.config.RSI_OVERSOLD:
-                    score += 15
-                    signals.append("RSI_OVERSOLD")
-                elif current_rsi > self.config.RSI_OVERBOUGHT:
-                    score -= 15
-                    signals.append("RSI_OVERBOUGHT")
-            
-            # RSI Divergence (+/- 25 points - stronger signal)
-            rsi_divergence = df.iloc[-1].get('rsi_divergence', 0)
-            if rsi_divergence == 1:
-                score += 25
-                signals.append("RSI_BULL_DIV")
-            elif rsi_divergence == -1:
-                score -= 25
-                signals.append("RSI_BEAR_DIV")
-            
-            # Volume confirmation (+/- 10 points)
-            volume_ratio = df.iloc[-1]['volume_ratio']
-            if not pd.isna(volume_ratio) and volume_ratio > self.config.VOLUME_SPIKE_THRESHOLD:
-                if score > 0:
-                    score += 10
-                    signals.append("VOL_CONFIRM_BUY")
-                elif score < 0:
-                    score -= 10
-                    signals.append("VOL_CONFIRM_SELL")
-            
-            # Bollinger Band signals - stronger in ranging markets
-            current_close = df.iloc[-1]['close']
-            current_upper = df.iloc[-1]['bb_upper']
-            current_lower = df.iloc[-1]['bb_lower']
-            prev_close = df.iloc[-2]['close']
-            
-            if not pd.isna(current_upper) and not pd.isna(current_lower):
-                if regime == "ranging":
-                    # Strong BB signals in ranging markets
-                    if current_close <= current_lower and prev_close > df.iloc[-2]['bb_lower']:
-                        score += 20  # Increased from 15
-                        signals.append("BB_OVERSOLD_RANGE")
-                    elif current_close >= current_upper and prev_close < df.iloc[-2]['bb_upper']:
-                        score -= 20  # Increased from 15
-                        signals.append("BB_OVERBOUGHT_RANGE")
-                else:
-                    # Weaker BB signals in trending markets
-                    if current_close <= current_lower and prev_close > df.iloc[-2]['bb_lower']:
-                        score += 10
-                        signals.append("BB_OVERSOLD")
-                    elif current_close >= current_upper and prev_close < df.iloc[-2]['bb_upper']:
-                        score -= 10
-                        signals.append("BB_OVERBOUGHT")
-            
-            # EMA trend confirmation bonus (for trending markets)
-            if regime == "trending":
-                current_close = df.iloc[-1]['close']
-                ema_20 = df.iloc[-1].get('ema_20', current_close)
-                if not pd.isna(ema_20):
-                    if current_close > ema_20 and score > 0:
-                        score += 5
-                        signals.append("EMA_TREND_CONFIRM")
-                    elif current_close < ema_20 and score < 0:
-                        score -= 5
-                        signals.append("EMA_TREND_CONFIRM")
-            signal_description = f"Score: {score} [{', '.join(signals)}]"
-            
-            if score >= self.config.BUY_SIGNAL_THRESHOLD:
-                return 'buy', signal_description, score
-            elif score <= self.config.SELL_SIGNAL_THRESHOLD:
-                return 'sell', signal_description, score
-            
-            return None, signal_description, score
-            
-        except Exception as e:
-            logger.error(f"Error generating signal score: {e}")
-            return None, "Error", 0
-    
     def calculate_position_size(self, price: float, signal: str, atr: float, signal_score: int = 0) -> float:
         """Calculate position size using hybrid approach based on config"""
         try:
@@ -819,7 +521,7 @@ class TradingBot:
                 sub_df = df.iloc[:i+1]
                 
                 # Detect market regime
-                regime = self.market_regime.detect_market_regime(sub_df)
+                regime = self.ta.detect_ta(sub_df)
                 
                 # Get signal with scoring system
                 signal, signal_desc, score = self.get_signal_score(sub_df)
@@ -837,7 +539,7 @@ class TradingBot:
             
             # Calculate regime statistics
             regime_stats = {}
-            for entry in self.market_regime.regime_history:
+            for entry in self.ta.regime_history:
                 regime = entry['regime']
                 if regime not in regime_stats:
                     regime_stats[regime] = 0
@@ -866,7 +568,6 @@ class TradingBot:
             logger.error(f"Backtest failed: {e}")
     
     def paper_trader(self):
-        """Run live paper trading"""
         logger.info("Starting paper trader...")
         self.is_running = True
         
@@ -897,7 +598,7 @@ class TradingBot:
                     self.last_price = df.iloc[-1]['close']
                     
                     # Detect market regime
-                    regime = self.market_regime.detect_market_regime(df)
+                    regime = self.ta.detect_market_regime(df)
                     
                     # Get signal with scoring system
                     signal, signal_desc, score = self.get_signal_score(df)

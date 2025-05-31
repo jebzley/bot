@@ -1,30 +1,21 @@
-from config import TradingConfig
-from bot import TradingBot
-import os
 import dotenv
 
 from logger import logger
+from portfolio import Portfolio
+from exchange import HyperliquidExchange
+
 
 dotenv.load_dotenv()
 
 def main():
-    config = TradingConfig()
-    bot = TradingBot(config)
+    exchange = HyperliquidExchange()
+    exchange.init_exchange()
+    if not exchange.hyperliquid:
+        logger.error("Failed to initialize exchange. Exiting application.")
+        return
     
-    try:
-        mode = os.getenv("TRADING_MODE", "backtest").lower()
-        
-        if mode == 'backtest':
-            bot.backtest()
-        else:
-            bot.paper_trader()
-            
-    except KeyboardInterrupt:
-        logger.info("Interrupted by user")
-    except Exception as e:
-        logger.error(f"Application error: {e}")
-    finally:
-        bot.stop()
+    portfolio = Portfolio(exchange.hyperliquid)
+    portfolio.initialize_portfolio()   
 
 if __name__ == "__main__":
     main()
