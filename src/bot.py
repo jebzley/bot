@@ -398,7 +398,7 @@ class TradingBot:
                 'pnl': pnl,
                 'position_type': self.portfolio.position_type,
                 'entry_time': self.portfolio.entry_time,
-                'exit_time': datetime.datetime.now(),
+                'exit_time': datetime.datetime.now().isoformat(),
                 'reason': reason
             }
             self.trade_history.append(trade_data)
@@ -834,7 +834,6 @@ class TradingBot:
             logger.info(f"{mode} trader stopped")
     
     def check_daily_trade_limit(self) -> bool:
-        """Check if daily trade limit has been reached"""
         if not self.is_live:
             return True
             
@@ -849,7 +848,6 @@ class TradingBot:
         return True
     
     def stop(self):
-        """Stop the trading bot"""
         self.is_running = False
         self.close_position(self.last_price, "🛑 BOT STOPPED")
         self.notifier.stop_command_polling()
