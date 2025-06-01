@@ -244,16 +244,13 @@ class TradingBot:
     def execute_trade(self, signal: str, price: float, regime: str, atr: float, signal_desc: str, signal_score: int) -> bool:
         """Execute trade based on signal with dynamic stops"""
         try:
-            # Check if we've hit daily loss limit
             if self.check_daily_loss_limit():
                 logger.warning("Daily loss limit reached - no new trades")
                 return False
             
-            # Check trading cooldown for live trading
             if self.is_live and not self.check_trading_cooldown():
                 return False
             
-            # Check daily trade limit for live trading
             if self.is_live and not self.check_daily_trade_limit():
                 return False
             
@@ -283,9 +280,17 @@ class TradingBot:
                     if not order:
                         return False
                     
-                    # Update with actual fill price
-                    actual_price = float(order.get('average', price))
-                    cost = float(order.get('cost', cost))
+                    # Update with actual fill price - FIX: Handle None values properly
+                    avg_price = order.get('average')
+                    if avg_price is not None:
+                        actual_price = float(avg_price)
+                    else:
+                        actual_price = float(order.get('price', price))
+                    
+                    # Get cost from order
+                    order_cost = order.get('cost')
+                    if order_cost is not None:
+                        cost = float(order_cost)
                     
                     # Update trade counters
                     self.portfolio.last_trade_dt = datetime.datetime.now()
@@ -348,7 +353,6 @@ class TradingBot:
             return False
     
     def close_position(self, price: float, reason: str) -> bool:
-        """Close current position and record trade"""
         try:
             if self.portfolio.position == 0:
                 return False
@@ -356,17 +360,25 @@ class TradingBot:
             position_value = self.portfolio.get_position_value(price)
             pnl = self.portfolio.get_unrealized_pnl(price)
             
-            # For live trading, execute the close order
             if self.is_live:
-                success, order = self.close_live_position()
-                if not success:
+                order = self.close_live_position()  
+                if not order:
                     logger.error("Failed to close live position")
                     return False
                 
-                actual_price = float(order.get('average', price))
-                fee = float(order.get('fee'))
-                feeCost = fee['cost'] if isinstance(fee, dict) else 0.0
-                pnl = float(order.get('cost', pnl)) - feeCost 
+                # Get actual price from order
+                avg_price = order.get('average')
+                if avg_price is not None:
+                    actual_price = float(avg_price)
+                else:
+                    actual_price = float(order.get('price', price))
+                
+                fee = order.get('fee', {})
+                feeCost = fee.get('cost', 0.0) if isinstance(fee, dict) else 0.0
+                
+                order_cost = order.get('cost')
+                if order_cost is not None:
+                    pnl = float(order_cost) - feeCost
             else:
                 actual_price = price
             
@@ -406,7 +418,6 @@ class TradingBot:
             self.portfolio.stop_loss_price = None
             self.portfolio.take_profit_price = None
             
-            # Update drawdown status after trade
             self.update_drawdown_status()
             
             mode = "LIVE" if self.is_live else "PAPER"
@@ -483,19 +494,16 @@ class TradingBot:
             self.notifier.send_message(f"❌ ORDER FAILED: {str(e)}")
             raise
 
-    def close_live_position(self) -> bool:
-        """Close position using market order"""
+    def close_live_position(self):  
         try:
             if self.portfolio.position == 0:
-                return False
+                return None
             
-            # Get current price for the order
             current_price = self.get_current_price()
             if not current_price:
                 logger.error("Unable to get current price for position closure")
-                return False
+                return None
                 
-            # Determine side to close position
             if self.portfolio.position_type == 'long':
                 side = 'sell'
                 amount = self.portfolio.position
@@ -503,7 +511,6 @@ class TradingBot:
                 side = 'buy'
                 amount = abs(self.portfolio.position)
             
-            # Execute close order with price for slippage calculation
             order = self.execute_live_order(
                 symbol=self.config.SYMBOL,
                 side=side,
@@ -511,11 +518,11 @@ class TradingBot:
                 price=current_price
             )
             
-            return order is not None
-            
+            return order  
+        
         except Exception as e:
             logger.error(f"Failed to close live position: {e}")
-            return False
+            return None
     
     def handle_trade(self, signal: Optional[str], price: float, regime: str, df: pd.DataFrame, signal_desc: str, signal_score: int):
         """Main trading logic simulation"""
@@ -720,7 +727,6 @@ class TradingBot:
             logger.error(f"Backtest failed: {e}")
     
     def check_trading_cooldown(self) -> bool:
-        """Check if enough time has passed since last trade"""
         if not self.is_live or not self.portfolio.last_trade_dt:
             return True
         
