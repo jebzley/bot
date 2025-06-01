@@ -430,13 +430,16 @@ class TradingBot:
             logger.error(f"Failed to close position: {e}")
             return False
 
-    def execute_live_order(self, symbol: str, side: str, amount: float, price: float = None) -> Optional[dict]:
+    def execute_live_order(self, symbol: str, side: str, amount: float, price: float = None, reduce_only: bool = None) -> Optional[dict]:
         """Execute a live order on the exchange"""
         try:
             # Get current price for slippage calculation
             current_price = price or self.get_current_price()
             if not current_price:
                 raise ValueError("Unable to get current price for order execution")
+            
+            # Round amount to avoid precision issues
+            amount = round(abs(amount), 8)  # 8 decimal places should be sufficient
             
             # Safety check for maximum position value
             if abs(amount) * current_price > self.config.MAX_POSITION_VALUE:
@@ -448,10 +451,16 @@ class TradingBot:
             order_type = 'market'
             params = {}
             
-            # Add reduce-only flag for closing positions
-            if (side == 'buy' and self.portfolio.position_type == 'short') or \
-               (side == 'sell' and self.portfolio.position_type == 'long'):
+            # Auto-detect reduce-only if not specified
+            if reduce_only is None:
+                reduce_only = (
+                    (side == 'buy' and self.portfolio.position_type == 'short') or 
+                    (side == 'sell' and self.portfolio.position_type == 'long')
+                )
+            
+            if reduce_only:
                 params['reduceOnly'] = True
+                logger.info(f"Using reduce-only order to close position")
             
             # Calculate slippage price (use configured slippage)
             slippage = self.config.SLIPPAGE_TOLERANCE
@@ -467,7 +476,7 @@ class TradingBot:
                 symbol=symbol,
                 type=order_type,
                 side=side,
-                amount=abs(amount),
+                amount=amount,
                 price=slippage_price,  # Required for Hyperliquid market orders
                 params=params
             )
@@ -484,8 +493,10 @@ class TradingBot:
                     'amount': amount,
                     'price': order.get('price', 'N/A'),
                     'type': order_type,
-                    'status': order.get('status', 'unknown')
+                    'status': order.get('status', 'unknown'),
+                    'reduce_only': reduce_only
                 })
+            
             self.portfolio.sync_with_exchange()
             return order
             
@@ -499,26 +510,64 @@ class TradingBot:
             if self.portfolio.position == 0:
                 return None
             
+            self.portfolio.sync_with_exchange()
+            
+            if self.portfolio.position == 0:
+                logger.info("No position to close after sync")
+                return None
+            
             current_price = self.get_current_price()
             if not current_price:
                 logger.error("Unable to get current price for position closure")
                 return None
-                
+            
+            # Get the exact position from exchange
+            try:
+                exchange_position = self.exchange.hyperliquid.fetch_position(self.config.SYMBOL)
+                if exchange_position and exchange_position.get('contracts'):
+                    exact_amount = abs(float(exchange_position['contracts']))
+                    logger.info(f"Using exact position from exchange: {exact_amount}")
+                else:
+                    # Fallback to portfolio position
+                    exact_amount = abs(self.portfolio.position)
+                    logger.warning(f"No exchange position found, using portfolio amount: {exact_amount}")
+            except Exception as e:
+                logger.error(f"Failed to fetch position from exchange: {e}")
+                exact_amount = abs(self.portfolio.position)
+            
+            # Determine side based on position type
             if self.portfolio.position_type == 'long':
                 side = 'sell'
-                amount = self.portfolio.position
             else:  # short
                 side = 'buy'
-                amount = abs(self.portfolio.position)
             
+            # Execute the closing order with reduce-only flag
             order = self.execute_live_order(
                 symbol=self.config.SYMBOL,
                 side=side,
-                amount=amount,
+                amount=exact_amount,
                 price=current_price
             )
             
-            return order  
+            if order:
+                # Wait a moment for the order to settle
+                time.sleep(1)
+                
+                # Verify position is fully closed
+                remaining_position = self.exchange.hyperliquid.fetch_position(self.config.SYMBOL)
+                if remaining_position and remaining_position.get('contracts'):
+                    remaining_amount = abs(float(remaining_position['contracts']))
+                    if remaining_amount > 0.00001:  # Tiny threshold
+                        logger.warning(f"Residual position detected: {remaining_amount}")
+                        # Attempt to close the residual
+                        self.execute_live_order(
+                            symbol=self.config.SYMBOL,
+                            side=side,
+                            amount=remaining_amount,
+                            price=current_price
+                        )
+            
+            return order
         
         except Exception as e:
             logger.error(f"Failed to close live position: {e}")
