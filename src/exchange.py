@@ -38,7 +38,6 @@ class HyperliquidExchange:
             exchange.load_markets()
             if not exchange.markets:
                 raise ValueError("Failed to load markets, check your credentials or network connection")
-            
             self.hyperliquid = exchange 
 
             logger.info("Exchange initialized successfully")

@@ -31,6 +31,7 @@ class Portfolio:
         self.daily_trades = []
         self.consecutive_losses = 0
         self.last_trade_dt: datetime = None
+        self.daily_trade_count = 0
         self.in_drawdown = False
     
     def initialize_portfolio(self, initial_cash = 1000.0):
@@ -87,13 +88,12 @@ class Portfolio:
                 
                 if exchange_size > 0 and exchange_side:
                     self.position = exchange_size if exchange_side == 'long' else -exchange_size
-                    self.entry_price = float(position['averagePrice'])
+                    self.entry_price = float(position['entryPrice'])
                     self.position_type = exchange_side
-                    self.entry_time = datetime.fromisoformat(position['datetime'])
                     self.unrealized_pnl = position['unrealizedPnl']
                     self.position_value = position['notional']
-                    
-                    logger.info(f"Portfolio synced: {self.position} @ {self.entry_price}")
+                    if self.entry_time is None:
+                        self.entry_time = datetime.now()
                 else:
                     # No position on exchange
                     if self.position != 0:

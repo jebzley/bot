@@ -1,5 +1,6 @@
 import pandas as pd
 import time
+import os
 import datetime
 import math
 from typing import Optional, Dict
@@ -7,23 +8,24 @@ from typing import Optional, Dict
 from config import TradingConfig
 from portfolio import Portfolio
 from telegram import TelegramNotifier
-from ta import TechnicalAnalysis
+from technicals import TechnicalAnalysis
 from exchange import HyperliquidExchange
-from logger import logger
+from logger import logger, TradeLogger
 
 class TradingBot:
     """Main trading bot class"""
     
-    def __init__(self, config: TradingConfig, exchange: HyperliquidExchange):
-        self.config = config
-        self.portfolio = Portfolio(config.INITIAL_CASH)
+    def __init__(self, exchange: HyperliquidExchange, portfolio: Portfolio):
+        self.config = TradingConfig()
+        self.portfolio = portfolio
         self.notifier = TelegramNotifier(bot_instance=self)  
-        self.ta = TechnicalAnalysis(config, exchange)
+        self.ta = TechnicalAnalysis(self.config, exchange)
         self.exchange: HyperliquidExchange = exchange
         self.is_running = False
-        self.is_live = config.TRADING_MODE.lower() == "live"
+        self.is_live = os.getenv("TRADING_MODE", "backtest").lower() == "live"
         self.trade_history = []
         self.last_price = None 
+        self.trade_logger = TradeLogger() 
         
     def calculate_position_size(self, price: float, signal: str, atr: float, signal_score: int = 0) -> float:
         """Calculate position size using hybrid approach based on config"""
@@ -119,7 +121,7 @@ class TradingBot:
         
         try:
             # Check maximum loss
-            if self.portfolio.is_max_loss_exceeded(price, self.config.MAX_DAILY_LOSS_PCT):
+            if self.portfolio.is_max_loss_exceeded(price):
                 self.close_position(price, "🚨 MAX LOSS STOP")
                 return True
             
@@ -163,7 +165,7 @@ class TradingBot:
                     return True
                 
                 # Also exit if momentum is clearly shifting (MACD histogram declining)
-                if len(df) >= 3 and self.portfolio.entry_time <= datetime.datetime.now() - datetime.timedelta(minutes=15):
+                if len(df) >= 3 and self.portfolio.entry_time and self.portfolio.entry_time <= datetime.datetime.now() - datetime.timedelta(minutes=15):
                     macd_hist_current = df.iloc[-1].get('macd_hist', 0)
                     macd_hist_prev = df.iloc[-2].get('macd_hist', 0)
                     macd_hist_prev2 = df.iloc[-3].get('macd_hist', 0)
@@ -286,8 +288,8 @@ class TradingBot:
                     cost = float(order.get('cost', cost))
                     
                     # Update trade counters
-                    self.last_trade_time = datetime.datetime.now()
-                    self.daily_trade_count += 1
+                    self.portfolio.last_trade_dt = datetime.datetime.now()
+                    self.portfolio.daily_trade_count += 1
                     
                 except Exception as e:
                     logger.error(f"Live order failed: {e}")
@@ -304,10 +306,7 @@ class TradingBot:
                 self.portfolio.position_type = 'long' if qty > 0 else 'short'
             
             # Update last trade date
-            if(self.is_live):
-                self.portfolio.last_trade_dt = datetime.fromisoformat(order.get('datetime', datetime.datetime.now().isoformat())).date()
-            else:
-                self.portfolio.last_trade_dt = datetime.datetime.now().date()
+            self.portfolio.last_trade_dt = datetime.datetime.now()
             
             # Get position size info for logging
             multiplier = self.get_signal_strength_multiplier(signal_score)
@@ -354,8 +353,8 @@ class TradingBot:
             if self.portfolio.position == 0:
                 return False
             
-            position_value = self.portfolio.get_position_value(actual_price)
-            pnl = self.portfolio.get_unrealized_pnl(actual_price)
+            position_value = self.portfolio.get_position_value(price)
+            pnl = self.portfolio.get_unrealized_pnl(price)
             
             # For live trading, execute the close order
             if self.is_live:
@@ -423,13 +422,18 @@ class TradingBot:
     def execute_live_order(self, symbol: str, side: str, amount: float, price: float = None) -> Optional[dict]:
         """Execute a live order on the exchange"""
         try:
-            current_price = self.get_current_price()
-            if current_price and abs(amount) * current_price > self.config.MAX_POSITION_VALUE:
+            # Get current price for slippage calculation
+            current_price = price or self.get_current_price()
+            if not current_price:
+                raise ValueError("Unable to get current price for order execution")
+            
+            # Safety check for maximum position value
+            if abs(amount) * current_price > self.config.MAX_POSITION_VALUE:
                 logger.warning(f"Order exceeds max position value of ${self.config.MAX_POSITION_VALUE}")
                 amount = self.config.MAX_POSITION_VALUE / current_price
                 amount = math.floor(amount * 100) / 100
             
-            # Market order by default
+            # Market order with slippage protection
             order_type = 'market'
             params = {}
             
@@ -438,15 +442,22 @@ class TradingBot:
                (side == 'sell' and self.portfolio.position_type == 'long'):
                 params['reduceOnly'] = True
             
-            logger.info(f"Executing {order_type} {side} order for {amount} {symbol}")
+            # Calculate slippage price (use configured slippage)
+            slippage = self.config.SLIPPAGE_TOLERANCE
+            if side == 'buy':
+                slippage_price = current_price * (1 + slippage)
+            else:  # sell
+                slippage_price = current_price * (1 - slippage)
             
-            # Create order
+            logger.info(f"Executing {order_type} {side} order for {amount} {symbol} with max price {slippage_price:.4f} ({slippage*100:.1f}% slippage)")
+            
+            # Create order with slippage price
             order = self.exchange.hyperliquid.create_order(
                 symbol=symbol,
                 type=order_type,
                 side=side,
                 amount=abs(amount),
-                price=price,
+                price=slippage_price,  # Required for Hyperliquid market orders
                 params=params
             )
             
@@ -472,10 +483,17 @@ class TradingBot:
             self.notifier.send_message(f"❌ ORDER FAILED: {str(e)}")
             raise
 
-    def close_live_position(self):
+    def close_live_position(self) -> bool:
+        """Close position using market order"""
         try:
             if self.portfolio.position == 0:
-                return False, None
+                return False
+            
+            # Get current price for the order
+            current_price = self.get_current_price()
+            if not current_price:
+                logger.error("Unable to get current price for position closure")
+                return False
                 
             # Determine side to close position
             if self.portfolio.position_type == 'long':
@@ -485,28 +503,53 @@ class TradingBot:
                 side = 'buy'
                 amount = abs(self.portfolio.position)
             
-            # Execute close order
+            # Execute close order with price for slippage calculation
             order = self.execute_live_order(
                 symbol=self.config.SYMBOL,
                 side=side,
-                amount=amount
+                amount=amount,
+                price=current_price
             )
-            if not order:
-                logger.error("Failed to close position - order not created")
-                return False, None
             
-            return True, order
+            return order is not None
             
         except Exception as e:
             logger.error(f"Failed to close live position: {e}")
-            return False, None
+            return False
     
+    def handle_trade(self, signal: Optional[str], price: float, regime: str, df: pd.DataFrame, signal_desc: str, signal_score: int):
+        """Main trading logic simulation"""
+        try:
+            self.log_portfolio_status(price, regime)
+            
+            # Check exit conditions first
+            if self.check_exit_conditions(price, signal, regime, df):
+                return
+            
+            # Entry logic - only enter if no position
+            if signal and self.portfolio.position == 0:
+                current_atr = df.iloc[-1].get('atr', None)
+                if current_atr and signal in ['buy', 'sell']:
+                    # Additional entry filter: Don't trade against strong trends
+                    current_adx = df.iloc[-1].get('adx', 0)
+                    if current_adx > 40:  # Strong trend
+                        # Only take trades in direction of trend
+                        ema_20 = df.iloc[-1].get('ema_20', price)
+                        if (signal == 'buy' and price < ema_20) or (signal == 'sell' and price > ema_20):
+                            logger.info(f"Skipping {signal} signal against strong trend (ADX: {current_adx:.1f})")
+                            return
+                    
+                    self.execute_trade(signal, price, regime, current_atr, signal_desc, signal_score)
+                    
+        except Exception as e:
+            logger.error(f"Error in trade simulation: {e}")
+
     def update_drawdown_status(self):
         """Update drawdown status based on recent performance"""
         try:
             # Reset daily stats if new day
             current_date = datetime.datetime.now().date()
-            if self.portfolio.last_trade_dt and current_date != self.portfolio.last_trade_dt.date():
+            if self.portfolio.last_trade_dt is not None and current_date != self.portfolio.last_trade_dt.date():
                 self.portfolio.daily_pnl = 0.0
                 self.portfolio.daily_trades = []
                 self.portfolio.last_trade_dt = current_date
@@ -535,11 +578,10 @@ class TradingBot:
         if self.portfolio.daily_pnl < -self.portfolio.initial_cash * self.config.MAX_DAILY_LOSS_PCT:
             return True
         return False
-    
-    
+       
     def get_current_price(self) -> Optional[float]:
         try:
-            df = self.get_historical_ohlcv(
+            df = self.ta.get_historical_ohlcv(
                 self.config.SYMBOL,
                 self.config.INTERVAL,
                 5
@@ -609,7 +651,7 @@ class TradingBot:
         logger.info("Starting backtest...")
         
         try:
-            df = self.get_historical_ohlcv(
+            df = self.ta.get_historical_ohlcv(
                 self.config.SYMBOL, 
                 self.config.INTERVAL, 
                 self.config.BACKTEST_LIMIT
@@ -619,7 +661,7 @@ class TradingBot:
                 logger.error("Insufficient data for backtest")
                 return
             
-            df = self.apply_indicators(df)
+            df = self.ta.apply_indicators(df)
             if df is None:
                 logger.error("Failed to apply indicators for backtest")
                 return
@@ -631,13 +673,13 @@ class TradingBot:
                 sub_df = df.iloc[:i+1]
                 
                 # Detect market regime
-                regime = self.ta.detect_ta(sub_df)
+                regime = self.ta.detect_market_regime(sub_df)
                 
                 # Get signal with scoring system
-                signal, signal_desc, score = self.get_signal_score(sub_df)
+                signal, signal_desc, score = self.ta.get_signal_score(sub_df)
                 
                 current_price = sub_df.iloc[-1]['close']
-                self.simulate_trade(signal, current_price, regime, sub_df, signal_desc, score)
+                self.execute_trade(signal, current_price, regime, sub_df, signal_desc, score)
             
             # Final results
             final_price = df.iloc[-1]['close']
@@ -677,6 +719,22 @@ class TradingBot:
         except Exception as e:
             logger.error(f"Backtest failed: {e}")
     
+    def check_trading_cooldown(self) -> bool:
+        """Check if enough time has passed since last trade"""
+        if not self.is_live or not self.portfolio.last_trade_dt:
+            return True
+        
+        last_trade = None
+        if(self.portfolio.last_trade_dt):
+            last_trade = self.portfolio.last_trade_dt
+        if not last_trade:
+            time_since_last_trade = (datetime.datetime.now() - self.portfolio.last_trade_dt).total_seconds()
+            if time_since_last_trade < self.config.LIVE_TRADE_COOLDOWN:
+                remaining = self.config.LIVE_TRADE_COOLDOWN - time_since_last_trade
+                logger.info(f"Trade cooldown active: {remaining:.0f}s remaining")
+                return False
+        return True
+    
     def start_trading(self):
         logger.info(f"Starting {'LIVE' if self.is_live else 'PAPER'} trader...")
         self.is_running = True
@@ -690,16 +748,17 @@ class TradingBot:
             startup_msg += f"Max Position: ${self.config.MAX_POSITION_VALUE}\n"
             startup_msg += f"Trade Cooldown: {self.config.LIVE_TRADE_COOLDOWN}s\n"
             startup_msg += f"Max Daily Trades: {self.config.MAX_DAILY_TRADES}"
-        
+
         self.notifier.send_message(startup_msg)
         
+        self.exchange.hyperliquid.set_leverage(1, self.config.SYMBOL)
         # Start Telegram command polling
         self.notifier.start_command_polling()
         
         try:
             while self.is_running:
                 try:
-                    df = self.get_historical_ohlcv(
+                    df = self.ta.get_historical_ohlcv(
                         self.config.SYMBOL, 
                         self.config.INTERVAL, 
                         self.config.HISTORICAL_LIMIT
@@ -710,7 +769,7 @@ class TradingBot:
                         time.sleep(self.config.SLEEP_INTERVAL)
                         continue
                     
-                    df = self.apply_indicators(df)
+                    df = self.ta.apply_indicators(df)
                     if df is None:
                         logger.warning("Failed to apply indicators, skipping iteration")
                         time.sleep(self.config.SLEEP_INTERVAL)
@@ -720,14 +779,14 @@ class TradingBot:
                     self.last_price = df.iloc[-1]['close']
                     
                     # Detect market regime
-                    regime = self.market_regime.detect_market_regime(df)
+                    regime = self.ta.detect_market_regime(df)
                     
                     # Get signal with scoring system
-                    signal, signal_desc, score = self.get_signal_score(df)
+                    signal, signal_desc, score = self.ta.get_signal_score(df)
                     
                     current_price = df.iloc[-1]['close']
                     
-                    self.simulate_trade(signal, current_price, regime, df, signal_desc, score)
+                    self.handle_trade(signal, current_price, regime, df, signal_desc, score)
                     
                     # Log performance metrics periodically
                     if len(self.trade_history) > 0 and len(self.trade_history) % 10 == 0:
@@ -738,7 +797,7 @@ class TradingBot:
                     
                     # Sync position periodically for live trading
                     if self.is_live and len(self.trade_history) % 5 == 0:
-                        self.sync_position_with_exchange()
+                        self.portfolio.sync_with_exchange()
                     
                     time.sleep(self.config.SLEEP_INTERVAL)
                     
@@ -768,8 +827,24 @@ class TradingBot:
             
             logger.info(f"{mode} trader stopped")
     
+    def check_daily_trade_limit(self) -> bool:
+        """Check if daily trade limit has been reached"""
+        if not self.is_live:
+            return True
+            
+        current_date = datetime.datetime.now().date()
+        if self.portfolio.last_trade_dt and self.portfolio.last_trade_dt.date() != current_date:
+            self.portfolio.daily_trade_count = 0
+            self.portfolio.last_trade_dt = datetime.datetime.now()
+            
+        if self.portfolio.daily_trade_count >= self.config.MAX_DAILY_TRADES:
+            logger.warning(f"Daily trade limit reached: {self.portfolio.daily_trade_count}/{self.config.MAX_DAILY_TRADES}")
+            return False
+        return True
+    
     def stop(self):
         """Stop the trading bot"""
         self.is_running = False
+        self.close_position(self.last_price, "🛑 BOT STOPPED")
         self.notifier.stop_command_polling()
         logger.info("Stop signal sent to trading bot")

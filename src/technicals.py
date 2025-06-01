@@ -308,7 +308,7 @@ class TechnicalAnalysis:
             signals = []
             
             # Get market regime for context
-            regime = self.market_regime.detect_market_regime(df)
+            regime = self.detect_market_regime(df)
             
             # MACD signal (+/- 20 points)
             current_macd = df.iloc[-1]['macd']
