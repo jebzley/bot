@@ -587,13 +587,11 @@ class TradingBot:
                 current_atr = df.iloc[-1].get('atr', None)
                 if current_atr and signal in ['buy', 'sell']:
                     # Additional entry filter: Don't trade against strong trends
-                    current_adx = df.iloc[-1].get('adx', 0)
-                    if current_adx > 40:  # Strong trend
-                        # Only take trades in direction of trend
-                        ema_20 = df.iloc[-1].get('ema_20', price)
-                        if (signal == 'buy' and price < ema_20) or (signal == 'sell' and price > ema_20):
-                            logger.info(f"Skipping {signal} signal against strong trend (ADX: {current_adx:.1f})")
-                            return
+                    # Only take trades in direction of trend
+                    ema_20 = df.iloc[-1].get('ema_20', price)
+                    if (signal == 'buy' and price < ema_20) or (signal == 'sell' and price > ema_20):
+                        logger.info(f"Skipping {signal} signal against trend")
+                        return
                     
                     self.execute_trade(signal, price, regime, current_atr, signal_desc, signal_score)
                     
@@ -735,7 +733,9 @@ class TradingBot:
                 signal, signal_desc, score = self.ta.get_signal_score(sub_df)
                 
                 current_price = sub_df.iloc[-1]['close']
-                self.execute_trade(signal, current_price, regime, sub_df, signal_desc, score)
+                
+                # Call handle_trade instead of execute_trade directly
+                self.handle_trade(signal, current_price, regime, sub_df, signal_desc, score)
             
             # Final results
             final_price = df.iloc[-1]['close']
