@@ -555,7 +555,7 @@ class TradingBot:
         """Update drawdown status based on recent performance"""
         try:
             # Reset daily stats if new day
-            current_date = datetime.datetime.now().date()
+            current_date = datetime.datetime.now()
             if self.portfolio.last_trade_dt is not None and current_date != self.portfolio.last_trade_dt.date():
                 self.portfolio.daily_pnl = 0.0
                 self.portfolio.daily_trades = []
