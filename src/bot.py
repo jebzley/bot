@@ -114,6 +114,34 @@ class TradingBot:
             logger.error(f"Error in simple position size calculation: {e}")
             return 0.0
     
+    def check_dynamic_exits(self, price: float, df: pd.DataFrame) -> tuple[bool, str]:
+        if self.portfolio.position == 0:
+            return False, ""
+             
+        # 2. Time-based profit taking
+        if self.portfolio.entry_time:
+            time_in_position = datetime.datetime.now() - self.portfolio.entry_time
+            hours_in_position = time_in_position.total_seconds() / 3600
+            
+            current_pnl_pct = self.portfolio.get_unrealized_pnl(price) / (self.portfolio.entry_price * abs(self.portfolio.position))
+            
+            # Scale out if profitable after certain time
+            if hours_in_position > 2 and current_pnl_pct > 0.01:  # 1% profit after 2 hours
+                return True, "⏰ TIME-BASED PROFIT"
+        
+        # 3. Support/Resistance exit
+        bb_upper = df.iloc[-1]['bb_upper']
+        bb_lower = df.iloc[-1]['bb_lower']
+        
+        if self.portfolio.position_type == 'long' and price > bb_upper:
+            if self.portfolio.get_unrealized_pnl(price) > 0:
+                return True, "📊 RESISTANCE EXIT"
+        elif self.portfolio.position_type == 'short' and price < bb_lower:
+            if self.portfolio.get_unrealized_pnl(price) > 0:
+                return True, "📊 SUPPORT EXIT"
+        
+        return False, ""
+
     def check_exit_conditions(self, price: float, signal: Optional[str], regime: str, df: pd.DataFrame) -> bool:
         """Check various exit conditions including time-based stops"""
         if self.portfolio.position == 0:
@@ -135,6 +163,13 @@ class TradingBot:
             
             # Get current ATR for dynamic stops
             current_atr = df.iloc[-1].get('atr', None)
+            atr_5_avg = df['atr'].tail(5).mean()
+
+            if current_atr > atr_5_avg * 1.5:  # High volatility
+                # Wider stops in volatile conditions
+                trailing_multiplier = 2
+            else:
+                trailing_multiplier = 1.2
             
             # Long position management
             if self.portfolio.position_type == 'long':
@@ -154,7 +189,7 @@ class TradingBot:
                 
                 # Trailing stop
                 if self.portfolio.highest_price and current_atr:
-                    trailing_stop = self.portfolio.highest_price - (self.config.ATR_MULTIPLIER * current_atr)
+                    trailing_stop = self.portfolio.highest_price - (trailing_multiplier * current_atr)
                     if price <= trailing_stop:
                         self.close_position(price, "🛑 TRAILING STOP (LONG)")
                         return True
@@ -194,7 +229,8 @@ class TradingBot:
                 
                 # Trailing stop
                 if self.portfolio.lowest_price and current_atr:
-                    trailing_stop = self.portfolio.lowest_price + (self.config.ATR_MULTIPLIER * current_atr)
+
+                    trailing_stop = self.portfolio.lowest_price + (trailing_multiplier * current_atr)
                     if price >= trailing_stop:
                         self.close_position(price, "🛑 TRAILING STOP (SHORT)")
                         return True
@@ -215,9 +251,13 @@ class TradingBot:
                         self.portfolio.get_unrealized_pnl(price) > 0):
                         self.close_position(price, "📊 MOMENTUM EXIT (SHORT)")
                         return True
+
+            # Check for dynamic exits based on volatility and time
+            dynamic_exit, reason = self.check_dynamic_exits(price, df)
+            if dynamic_exit:
+                self.close_position(price, reason)
+                return True
             
-            return False
-        
         except Exception as e:
             logger.error(f"Error checking exit conditions: {e}")
             return False
@@ -586,7 +626,6 @@ class TradingBot:
             if signal and self.portfolio.position == 0:
                 current_atr = df.iloc[-1].get('atr', None)
                 if current_atr and signal in ['buy', 'sell']:
-                    # Additional entry filter: Don't trade against strong trends
                     # Only take trades in direction of trend
                     ema_20 = df.iloc[-1].get('ema_20', price)
                     if (signal == 'buy' and price < ema_20) or (signal == 'sell' and price > ema_20):
