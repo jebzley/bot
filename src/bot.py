@@ -590,7 +590,6 @@ class TradingBot:
                     # Only take trades in direction of trend
                     ema_20 = df.iloc[-1].get('ema_20', price)
                     if (signal == 'buy' and price < ema_20) or (signal == 'sell' and price > ema_20):
-                        logger.info(f"Skipping {signal} signal against trend")
                         return
                     
                     self.execute_trade(signal, price, regime, current_atr, signal_desc, signal_score)

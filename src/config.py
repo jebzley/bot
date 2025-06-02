@@ -39,12 +39,12 @@ class TradingConfig:
     
     # RSI Parameters
     RSI_PERIOD: int = 14
-    RSI_OVERSOLD: float = 35  
-    RSI_OVERBOUGHT: float = 65  
+    RSI_OVERSOLD: float = 30 
+    RSI_OVERBOUGHT: float = 70  
     
     # ATR Parameters
     ATR_PERIOD: int = 14
-    ATR_MULTIPLIER: float = 1.5  
+    ATR_MULTIPLIER: float = 1.2 
     
     # Volume Parameters
     VOLUME_SMA_PERIOD: int = 20
@@ -54,7 +54,7 @@ class TradingConfig:
     ADX_PERIOD: int = 14
     ADX_TRENDING_THRESHOLD: float = 25
     ADX_RANGING_THRESHOLD: float = 20
-    EMA_PERIOD: int = 20
+    EMA_PERIOD: int = 50
     EMA_TREND_CANDLES: int = 10
     BB_PERIOD: int = 20
     BB_STD: float = 2.0
