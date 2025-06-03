@@ -60,11 +60,11 @@ class TradingConfig:
     BB_STD: float = 2.0
     BB_ZSCORE_THRESHOLD: float = -1.0
     
-    MAX_POSITION_VALUE: float = 100.0  # Maximum $100 position initially
+    MAX_POSITION_VALUE: float = 500.0
     LIVE_TRADE_COOLDOWN: int = 60  # Seconds between trades
-    MAX_DAILY_TRADES: int = 10  # Maximum trades per day
+    MAX_DAILY_TRADES: int = 100  # Maximum trades per day
     REQUIRE_CONFIRMATION: bool = False  # Set to True to require Telegram confirmation
     SLIPPAGE_TOLERANCE: float = 0.05
-    SLEEP_INTERVAL: int = 20
+    SLEEP_INTERVAL: int = 10
     HISTORICAL_LIMIT: int = 300
     BACKTEST_LIMIT: int = 21600
