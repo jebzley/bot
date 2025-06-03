@@ -7,9 +7,9 @@ class TradingConfig:
     INTERVAL: str = "5m"
     TRADE_SIZE_PCT: float = 0.3  
     INITIAL_CASH: float = 1000
-    TRAILING_STOP_PCT: float = 0.02
-    TAKE_PROFIT_PCT: float = 0.03 
-    STOP_LOSS_PCT: float = 0.02 
+    TRAILING_STOP_PCT: float = 0.01
+    TAKE_PROFIT_PCT: float = 0.03
+    STOP_LOSS_PCT: float = 0.01 
     
     MAX_POSITION_DURATION_HOURS: int = 4
     
@@ -23,14 +23,14 @@ class TradingConfig:
     
     # Signal strength position multipliers
     SIGNAL_VERY_STRONG: int = 40
-    SIGNAL_STRONG: int = 25
+    SIGNAL_STRONG: int = 30
     MULTIPLIER_VERY_STRONG: float = 1.5
     MULTIPLIER_STRONG: float = 1.0
     MULTIPLIER_NORMAL: float = 0.7
     
     # Signal scoring thresholds
-    BUY_SIGNAL_THRESHOLD: int = 15  
-    SELL_SIGNAL_THRESHOLD: int = -15  
+    BUY_SIGNAL_THRESHOLD: int = 20  
+    SELL_SIGNAL_THRESHOLD: int = -20
     
     # MACD Strategy Parameters
     MACD_FAST: int = 12
@@ -39,12 +39,12 @@ class TradingConfig:
     
     # RSI Parameters
     RSI_PERIOD: int = 14
-    RSI_OVERSOLD: float = 30 
-    RSI_OVERBOUGHT: float = 70  
+    RSI_OVERSOLD: float = 25
+    RSI_OVERBOUGHT: float = 75
     
     # ATR Parameters
     ATR_PERIOD: int = 14
-    ATR_MULTIPLIER: float = 1.2 
+    ATR_MULTIPLIER: float = 1.2
     
     # Volume Parameters
     VOLUME_SMA_PERIOD: int = 20

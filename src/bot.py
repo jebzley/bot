@@ -631,7 +631,7 @@ class TradingBot:
                 if current_atr and signal in ['buy', 'sell']:
                     # Only take trades in direction of trend
                     ema_20 = df.iloc[-1].get('ema_20', price)
-                    if abs(signal_score) < 30:
+                    if abs(signal_score) < 39:
                         if (signal == 'buy' and price < ema_20) or (signal == 'sell' and price > ema_20):
                             return
                     
