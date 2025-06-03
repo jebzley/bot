@@ -94,9 +94,6 @@ class TelegramNotifier:
             elif command == "/metrics":
                 return self.get_metrics_message()
             
-            elif command == "/regime":
-                return self.get_regime_message()
-            
             elif command == "/help":
                 return self.get_help_message()
             
@@ -206,15 +203,6 @@ class TelegramNotifier:
                 return "ℹ️ No open position to close"
             
             # Get current price
-            df = self.bot_instance.get_historical_ohlcv(
-                self.bot_instance.config.SYMBOL,
-                self.bot_instance.config.INTERVAL,
-                5
-            )
-            
-            if df is None or len(df) == 0:
-                return "❌ Unable to fetch current price for position closure"
-            
             current_price = self.bot_instance.get_current_price()
             
             # Close the position
@@ -232,12 +220,9 @@ class TelegramNotifier:
     def stop_bot_command(self) -> str:
         """Stop the trading bot"""
         try:
-            if hasattr(self.bot_instance, 'is_running'):
-                self.bot_instance.is_running = False
+            if self.bot_instance.is_running:
+                self.bot_instance.stop()
                 
-            # Stop command polling as well
-            self.stop_command_polling()
-            
             return "🛑 Bot stop signal sent. The bot will shutdown gracefully."
             
         except Exception as e:
@@ -273,36 +258,6 @@ class TelegramNotifier:
             logger.error(f"Error getting metrics: {e}")
             return f"❌ Error getting metrics: {str(e)}"
     
-    def get_regime_message(self) -> str:
-        """Get current market regime information"""
-        try:
-            regime_detector = self.bot_instance.market_regime
-            current_regime = regime_detector.current_regime
-            
-            # Get recent regime history
-            recent_history = regime_detector.regime_history[-5:] if regime_detector.regime_history else []
-            
-            message = f"""<b>📈 MARKET REGIME</b>
-
-<b>Current Regime:</b> {current_regime.upper()}
-
-<b>Recent History:</b>"""
-            
-            for entry in recent_history:
-                timestamp = entry['timestamp'].strftime('%H:%M')
-                regime = entry['regime'].upper()
-                adx = entry.get('adx', 0)
-                message += f"\n{timestamp}: {regime} (ADX: {adx:.1f})"
-            
-            if not recent_history:
-                message += "\nNo regime history available"
-            
-            return message
-            
-        except Exception as e:
-            logger.error(f"Error getting regime info: {e}")
-            return f"❌ Error getting regime info: {str(e)}"
-    
     def get_help_message(self) -> str:
         """Get help message with available commands"""
         return """<b>🤖 TELEGRAM BOT COMMANDS</b>
@@ -313,6 +268,7 @@ class TelegramNotifier:
 <b>/metrics</b> - Trading performance metrics
 <b>/regime</b> - Current market regime
 <b>/stop</b> - Stop the trading bot
+<b>/start</b> - Start the trading bot 
 <b>/help</b> - Show this help message
 
 <i>💡 Commands are case-insensitive</i>
@@ -364,3 +320,14 @@ class TelegramNotifier:
             except Exception as e:
                 logger.error(f"Error in command polling loop: {e}")
                 time.sleep(5)  # Wait longer on error
+
+    def start_bot(self):
+        try:
+            if not self.bot_instance.is_running:
+                self.bot_instance.start()
+                return "✅ Bot started successfully"
+            else: 
+                return "ℹ️ Bot is already running"
+        except Exception as e:
+            return f"❌ Error starting bot: {str(e)}"
+            

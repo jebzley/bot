@@ -388,6 +388,7 @@ class TradingBot:
                 msg = f"📉 {'LIVE' if self.is_live else 'PAPER'} SHORT @ {actual_price:.4f} | {size_info} | SL: {self.portfolio.stop_loss_price:.4f} | TP: {self.portfolio.take_profit_price:.4f} | {regime.upper()} | {signal_desc}"
             
             logger.info(msg)
+            self.notifier.send_message(msg)
             return True
             
         except Exception as e:
@@ -940,5 +941,13 @@ class TradingBot:
     def stop(self):
         self.is_running = False
         self.close_position(self.last_price, "🛑 BOT STOPPED")
-        self.notifier.stop_command_polling()
         logger.info("Stop signal sent to trading bot")
+
+    def start(self):
+        """Start the trading bot"""
+        if not self.is_running:
+            self.is_running = True
+            logger.info("Trading bot started")
+            self.start_trading()
+        else:
+            logger.warning("Trading bot is already running")
