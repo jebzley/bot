@@ -5,15 +5,15 @@ import time
 from typing import Optional
 
 from logger import logger
-
 class TelegramNotifier:
     """Handle Telegram notifications and commands"""
     
-    def __init__(self, bot_instance=None):
+    def __init__(self, bot_instance=None, portfolio=None):
         self.bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
         self.chat_id = os.getenv("TELEGRAM_CHAT_ID")
         self.is_backtest = os.getenv("TRADING_MODE", "backtest").lower() == "backtest"
         self.bot_instance = bot_instance  # Reference to the trading bot
+        self.portfolio = portfolio  # Reference to the portfolio for trading info
         
         # Command polling state
         self.last_update_id = 0
@@ -114,7 +114,7 @@ class TelegramNotifier:
     def get_status_message(self) -> str:
         """Get current bot status"""
         try:
-            portfolio = self.bot_instance.portfolio
+            portfolio = self.portfolio
             is_running = getattr(self.bot_instance, 'is_running', False)
             
             # Get current price (if available)
@@ -144,21 +144,10 @@ class TelegramNotifier:
     def get_portfolio_message(self) -> str:
         """Get detailed portfolio information"""
         try:
-            portfolio = self.bot_instance.portfolio
+            portfolio = self.portfolio
             
             # Try to get current price from recent data
-            current_price = None
-            try:
-                # This might fail if no recent data is available
-                df = self.bot_instance.get_historical_ohlcv(
-                    self.bot_instance.config.SYMBOL,
-                    self.bot_instance.config.INTERVAL,
-                    5
-                )
-                if df is not None and len(df) > 0:
-                    current_price = df.iloc[-1]['close']
-            except:
-                pass
+            current_price = self.bot_instance.get_current_price()
             
             if current_price is None:
                 return "❌ Unable to fetch current price for portfolio calculation"
@@ -211,7 +200,7 @@ class TelegramNotifier:
     def close_position_command(self) -> str:
         """Close current position"""
         try:
-            portfolio = self.bot_instance.portfolio
+            portfolio = self.portfolio
             
             if portfolio.position == 0:
                 return "ℹ️ No open position to close"
@@ -226,7 +215,7 @@ class TelegramNotifier:
             if df is None or len(df) == 0:
                 return "❌ Unable to fetch current price for position closure"
             
-            current_price = df.iloc[-1]['close']
+            current_price = self.bot_instance.get_current_price()
             
             # Close the position
             success = self.bot_instance.close_position(current_price, "📱 MANUAL CLOSE (Telegram)")

@@ -18,14 +18,16 @@ class TradingBot:
     def __init__(self, exchange: HyperliquidExchange, portfolio: Portfolio):
         self.config = TradingConfig()
         self.portfolio = portfolio
-        self.notifier = TelegramNotifier(bot_instance=self)  
         self.ta = TechnicalAnalysis(self.config, exchange)
         self.exchange: HyperliquidExchange = exchange
         self.is_running = False
         self.is_live = os.getenv("TRADING_MODE", "backtest").lower() == "live"
         self.trade_history = []
         self.last_price = None 
-        self.trade_logger = TradeLogger() 
+        self.trade_logger = TradeLogger()
+        self.notifier = TelegramNotifier(self, portfolio)  
+ 
+        
         
     def calculate_position_size(self, price: float, signal: str, atr: float, signal_score: int = 0) -> float:
         """Calculate position size using hybrid approach based on config"""
