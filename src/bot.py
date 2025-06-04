@@ -212,6 +212,12 @@ class TradingBot:
                         self.portfolio.get_unrealized_pnl(price) > 0 ):
                         self.close_position(price, "📊 MOMENTUM EXIT (LONG)")
                         return True
+                
+                # Exit if price crosses below EMA 50 (similar to Pine script)
+                ema_50 = df.iloc[-1].get('ema_50', None)
+                if ema_50 and price < ema_50 and self.portfolio.get_unrealized_pnl(price) > 0:
+                    self.close_position(price, "📉 EMA50 CROSS EXIT (LONG)")
+                    return True
             
             # Short position management
             elif self.portfolio.position_type == 'short':
@@ -253,6 +259,12 @@ class TradingBot:
                         self.portfolio.get_unrealized_pnl(price) > 0):
                         self.close_position(price, "📊 MOMENTUM EXIT (SHORT)")
                         return True
+                
+                # Exit if price crosses above EMA 50 (similar to Pine script)
+                ema_50 = df.iloc[-1].get('ema_50', None)
+                if ema_50 and price > ema_50 and self.portfolio.get_unrealized_pnl(price) > 0:
+                    self.close_position(price, "📈 EMA50 CROSS EXIT (SHORT)")
+                    return True
 
             # Check for dynamic exits based on volatility and time
             dynamic_exit, reason = self.check_dynamic_exits(price, df)
@@ -631,9 +643,16 @@ class TradingBot:
                 if current_atr and signal in ['buy', 'sell']:
                     # Only take trades in direction of trend
                     ema_20 = df.iloc[-1].get('ema_20', price)
+                    ema_50 = df.iloc[-1].get('ema_50', price)
+                    
+                    # For weaker signals, ensure price is on the right side of both EMAs
                     if abs(signal_score) < 39:
-                        if (signal == 'buy' and price < ema_20) or (signal == 'sell' and price > ema_20):
-                            return
+                        if signal == 'buy':
+                            if price < ema_20 or price < ema_50:
+                                return
+                        elif signal == 'sell':
+                            if price > ema_20 or price > ema_50:
+                                return
                     
                     self.execute_trade(signal, price, regime, current_atr, signal_desc, signal_score)
                     

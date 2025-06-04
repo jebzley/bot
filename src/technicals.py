@@ -207,12 +207,66 @@ class TechnicalAnalysis:
             logger.error(f"Error checking EMA trend persistence: {e}")
             return False, "error"
     
+    def detect_ema_bounce(self, df: pd.DataFrame) -> Tuple[bool, str]:
+        """Detect EMA 50 bounce patterns"""
+        try:
+            if len(df) < 2:
+                return False, "insufficient_data"
+            
+            current_close = df.iloc[-1]['close']
+            current_low = df.iloc[-1]['low']
+            current_high = df.iloc[-1]['high']
+            prev_close = df.iloc[-2]['close']
+            prev_low = df.iloc[-2]['low']
+            prev_high = df.iloc[-2]['high']
+            
+            current_ema50 = df.iloc[-1].get('ema_50', None)
+            prev_ema50 = df.iloc[-2].get('ema_50', None)
+            
+            if current_ema50 is None or prev_ema50 is None:
+                return False, "no_ema"
+            
+            # Calculate bounce threshold
+            bounce_threshold = current_ema50 * (self.config.EMA_BOUNCE_THRESHOLD_PCT / 100)
+            
+            # Check EMA trend (current vs 5 bars ago)
+            if len(df) >= self.config.EMA_TREND_LOOKBACK + 1:
+                ema50_trend_ago = df.iloc[-self.config.EMA_TREND_LOOKBACK - 1].get('ema_50', current_ema50)
+                ema_trending_up = current_ema50 > ema50_trend_ago
+                ema_trending_down = current_ema50 < ema50_trend_ago
+            else:
+                ema_trending_up = False
+                ema_trending_down = False
+            
+            # Long bounce conditions
+            long_touch = (prev_low <= prev_ema50 + bounce_threshold and 
+                         prev_low >= prev_ema50 - bounce_threshold)
+            long_bounce = current_close > current_ema50 and current_close > prev_close
+            
+            if long_touch and long_bounce and ema_trending_up:
+                return True, "long_bounce"
+            
+            # Short bounce conditions
+            short_touch = (prev_high <= prev_ema50 + bounce_threshold and 
+                          prev_high >= prev_ema50 - bounce_threshold)
+            short_bounce = current_close < current_ema50 and current_close < prev_close
+            
+            if short_touch and short_bounce and ema_trending_down:
+                return True, "short_bounce"
+            
+            return False, "no_bounce"
+            
+        except Exception as e:
+            logger.error(f"Error detecting EMA bounce: {e}")
+            return False, "error"
+    
     def apply_indicators(self, df: pd.DataFrame) -> Optional[pd.DataFrame]:
         try:
             required_periods = max(
                 self.config.MACD_SLOW + self.config.MACD_SIGNAL,
                 self.config.ADX_PERIOD,
                 self.config.EMA_PERIOD,
+                self.config.EMA_50_PERIOD,  # Added EMA 50
                 self.config.BB_PERIOD,
                 self.config.RSI_PERIOD,
                 self.config.ATR_PERIOD,
@@ -263,6 +317,10 @@ class TechnicalAnalysis:
             ema = EMAIndicator(close=df_result['close'], window=self.config.EMA_PERIOD)
             df_result.loc[:, 'ema_20'] = ema.ema_indicator()
             
+            # EMA 50 for bounce strategy
+            ema50 = EMAIndicator(close=df_result['close'], window=self.config.EMA_50_PERIOD)
+            df_result.loc[:, 'ema_50'] = ema50.ema_indicator()
+            
             # ADX
             adx_indicator = ADXIndicator(
                 high=df_result['high'], 
@@ -310,6 +368,16 @@ class TechnicalAnalysis:
             # Get market regime for context
             regime = self.detect_market_regime(df)
             
+            # EMA 50 Bounce signal (+/- 25 points - strong signal)
+            ema_bounce, bounce_type = self.detect_ema_bounce(df)
+            if ema_bounce:
+                if bounce_type == "long_bounce":
+                    score += 25
+                    signals.append("EMA50_LONG_BOUNCE")
+                elif bounce_type == "short_bounce":
+                    score -= 25
+                    signals.append("EMA50_SHORT_BOUNCE")
+            
             # MACD signal (+/- 20 points)
             current_macd = df.iloc[-1]['macd']
             current_signal = df.iloc[-1]['macd_signal']
@@ -323,16 +391,6 @@ class TechnicalAnalysis:
                 elif current_macd < current_signal and prev_macd >= prev_signal:
                     score -= 20
                     signals.append("MACD_SELL")
-            
-            # RSI signal (+/- 15 points) - only in ranging markets
-            current_rsi = df.iloc[-1]['rsi']
-            if not pd.isna(current_rsi):
-                if current_rsi < self.config.RSI_OVERSOLD:
-                    score += 15
-                    signals.append("RSI_OVERSOLD")
-                elif current_rsi > self.config.RSI_OVERBOUGHT:
-                    score -= 15
-                    signals.append("RSI_OVERBOUGHT")
             
             # RSI Divergence (+/- 25 points - stronger signal)
             rsi_divergence = df.iloc[-1].get('rsi_divergence', 0)
@@ -363,19 +421,11 @@ class TechnicalAnalysis:
                 if regime == "ranging":
                     # Strong BB signals in ranging markets
                     if current_close <= current_lower and prev_close > df.iloc[-2]['bb_lower']:
-                        score += 20  # Increased from 15
+                        score += 10  # Increased from 15
                         signals.append("BB_OVERSOLD_RANGE")
                     elif current_close >= current_upper and prev_close < df.iloc[-2]['bb_upper']:
-                        score -= 20  # Increased from 15
+                        score -= 10  # Increased from 15
                         signals.append("BB_OVERBOUGHT_RANGE")
-                else:
-                    # Weaker BB signals in trending markets
-                    if current_close <= current_lower and prev_close > df.iloc[-2]['bb_lower']:
-                        score += 10
-                        signals.append("BB_OVERSOLD")
-                    elif current_close >= current_upper and prev_close < df.iloc[-2]['bb_upper']:
-                        score -= 10
-                        signals.append("BB_OVERBOUGHT")
             
             # EMA trend confirmation bonus (for trending markets)
             if regime == "trending":

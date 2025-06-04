@@ -7,9 +7,9 @@ class TradingConfig:
     INTERVAL: str = "5m"
     TRADE_SIZE_PCT: float = 0.3  
     INITIAL_CASH: float = 1000
-    TRAILING_STOP_PCT: float = 0.01
-    TAKE_PROFIT_PCT: float = 0.03
-    STOP_LOSS_PCT: float = 0.01 
+    TRAILING_STOP_PCT: float = 0.005
+    TAKE_PROFIT_PCT: float = 0.02
+    STOP_LOSS_PCT: float = 0.01
     
     MAX_POSITION_DURATION_HOURS: int = 4
     
@@ -44,7 +44,13 @@ class TradingConfig:
     
     # ATR Parameters
     ATR_PERIOD: int = 14
-    ATR_MULTIPLIER: float = 1.2
+    ATR_MULTIPLIER: float = 1.5
+    
+    # EMA Parameters
+    EMA_PERIOD: int = 20  # For existing EMA
+    EMA_50_PERIOD: int = 50  # For EMA 50 bounce strategy
+    EMA_BOUNCE_THRESHOLD_PCT: float = 0.5  # Bounce threshold percentage
+    EMA_TREND_LOOKBACK: int = 5  # Bars to look back for trend confirmation
     
     # Volume Parameters
     VOLUME_SMA_PERIOD: int = 20
@@ -54,7 +60,6 @@ class TradingConfig:
     ADX_PERIOD: int = 14
     ADX_TRENDING_THRESHOLD: float = 25
     ADX_RANGING_THRESHOLD: float = 20
-    EMA_PERIOD: int = 50
     EMA_TREND_CANDLES: int = 10
     BB_PERIOD: int = 20
     BB_STD: float = 2.0
