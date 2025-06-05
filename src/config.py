@@ -4,7 +4,7 @@ from dataclasses import dataclass
 class TradingConfig:
     """Trading configuration parameters"""
     SYMBOL: str = "FARTCOIN/USDC:USDC"
-    INTERVAL: str = "5m"
+    INTERVAL: str = "1h"
     TRADE_SIZE_PCT: float = 0.3  
     INITIAL_CASH: float = 1000
     TRAILING_STOP_PCT: float = 0.005
