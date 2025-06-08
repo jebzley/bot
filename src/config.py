@@ -73,3 +73,5 @@ class TradingConfig:
     SLEEP_INTERVAL: int = 10
     HISTORICAL_LIMIT: int = 300
     BACKTEST_LIMIT: int = 21600
+
+    TAKER_FEE: float = 0.0005

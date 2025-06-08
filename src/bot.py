@@ -26,9 +26,7 @@ class TradingBot:
         self.last_price = None 
         self.trade_logger = TradeLogger()
         self.notifier = TelegramNotifier(self, portfolio)  
- 
-        
-        
+       
     def calculate_position_size(self, price: float, signal: str, atr: float, signal_score: int = 0) -> float:
         """Calculate position size using hybrid approach based on config"""
         try:
@@ -119,16 +117,17 @@ class TradingBot:
     def check_dynamic_exits(self, price: float, df: pd.DataFrame) -> tuple[bool, str]:
         if self.portfolio.position == 0:
             return False, ""
+        
+        fee = self.portfolio.get_position_value(price) * self.config.TAKER_FEE
+        is_in_profit = self.portfolio.get_unrealized_pnl(price) - fee > 0
              
         # 2. Time-based profit taking
         if self.portfolio.entry_time:
             time_in_position = datetime.datetime.now() - self.portfolio.entry_time
             hours_in_position = time_in_position.total_seconds() / 3600
             
-            current_pnl_pct = self.portfolio.get_unrealized_pnl(price) / (self.portfolio.entry_price * abs(self.portfolio.position))
-            
             # Scale out if profitable after certain time
-            if hours_in_position > 2 and current_pnl_pct > 0.01:  # 1% profit after 2 hours
+            if hours_in_position > 2 and is_in_profit: 
                 return True, "⏰ TIME-BASED PROFIT"
         
         # 3. Support/Resistance exit
@@ -136,10 +135,10 @@ class TradingBot:
         bb_lower = df.iloc[-1]['bb_lower']
         
         if self.portfolio.position_type == 'long' and price > bb_upper:
-            if self.portfolio.get_unrealized_pnl(price) > 0:
+            if is_in_profit:
                 return True, "📊 RESISTANCE EXIT"
         elif self.portfolio.position_type == 'short' and price < bb_lower:
-            if self.portfolio.get_unrealized_pnl(price) > 0:
+            if is_in_profit:
                 return True, "📊 SUPPORT EXIT"
         
         return False, ""
@@ -347,7 +346,7 @@ class TradingBot:
                         cost = float(order_cost)
                     
                     # Update trade counters
-                    self.portfolio.last_trade_dt = datetime.datetime.now()
+                    
                     self.portfolio.daily_trade_count += 1
                     
                 except Exception as e:
@@ -364,8 +363,6 @@ class TradingBot:
                 self.portfolio.entry_time = datetime.datetime.now()
                 self.portfolio.position_type = 'long' if qty > 0 else 'short'
             
-            # Update last trade date
-            self.portfolio.last_trade_dt = datetime.datetime.now()
             
             # Get position size info for logging
             multiplier = self.get_signal_strength_multiplier(signal_score)
@@ -439,7 +436,7 @@ class TradingBot:
             
             # Update daily PnL
             self.portfolio.daily_pnl += pnl
-            
+            self.portfolio.last_trade_dt = datetime.datetime.now()
             # Update consecutive losses/wins
             if pnl < 0:
                 self.portfolio.consecutive_losses += 1
@@ -840,10 +837,7 @@ class TradingBot:
         if not self.is_live or not self.portfolio.last_trade_dt:
             return True
         
-        last_trade = None
-        if(self.portfolio.last_trade_dt):
-            last_trade = self.portfolio.last_trade_dt
-        if not last_trade:
+        if self.portfolio.last_trade_dt:
             time_since_last_trade = (datetime.datetime.now() - self.portfolio.last_trade_dt).total_seconds()
             if time_since_last_trade < self.config.LIVE_TRADE_COOLDOWN:
                 remaining = self.config.LIVE_TRADE_COOLDOWN - time_since_last_trade

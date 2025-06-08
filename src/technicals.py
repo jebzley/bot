@@ -386,10 +386,10 @@ class TechnicalAnalysis:
             
             if not pd.isna(current_macd) and not pd.isna(current_signal):
                 if current_macd > current_signal and prev_macd <= prev_signal:
-                    score += 0
+                    score += 10
                     signals.append("MACD_BUY")
                 elif current_macd < current_signal and prev_macd >= prev_signal:
-                    score -= 0
+                    score -= 10
                     signals.append("MACD_SELL")
             
             # RSI Divergence (+/- 25 points - stronger signal)
@@ -421,10 +421,10 @@ class TechnicalAnalysis:
                 if regime == "ranging":
                     # Strong BB signals in ranging markets
                     if current_close <= current_lower and prev_close > df.iloc[-2]['bb_lower']:
-                        score += 0  # Increased from 15
+                        score += 15  # Increased from 15
                         signals.append("BB_OVERSOLD_RANGE")
                     elif current_close >= current_upper and prev_close < df.iloc[-2]['bb_upper']:
-                        score -= 0  # Increased from 15
+                        score -= 15  # Increased from 15
                         signals.append("BB_OVERBOUGHT_RANGE")
             
             # EMA trend confirmation bonus (for trending markets)
