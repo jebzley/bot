@@ -3,6 +3,7 @@ import time
 import os
 import datetime
 import math
+import re
 from typing import Optional, Dict
 
 from config import TradingConfig
@@ -11,6 +12,7 @@ from telegram import TelegramNotifier
 from technicals import TechnicalAnalysis
 from exchange import HyperliquidExchange
 from logger import logger, TradeLogger
+from csv_loader import CSVDataLoader
 
 class TradingBot:
     """Main trading bot class"""
@@ -758,25 +760,60 @@ class TradingBot:
             logger.error(f"Error calculating performance metrics: {e}")
             return {}
     
-    def backtest(self):
-        """Run backtest on historical data"""
+    def backtest(self, csv_filepath: str = None):
         logger.info("Starting backtest...")
         
         try:
-            df = self.ta.get_historical_ohlcv(
-                self.config.SYMBOL, 
-                self.config.INTERVAL, 
-                self.config.BACKTEST_LIMIT
-            )
+            # Load data from CSV or exchange
+            if csv_filepath:
+                logger.info(f"Loading data from CSV: {csv_filepath}")
+                df = CSVDataLoader.load_csv_data(csv_filepath)
+                
+                if df is None:
+                    logger.error("Failed to load CSV data")
+                    return
+                
+                # If the CSV data is in a different interval, resample to match config
+                # Extract interval from filename if possible (e.g., "PEPEUSDC5m" -> "5m")
+                match = re.search(r'(\d+[mhd])', os.path.basename(csv_filepath).lower())
+                if match:
+                    csv_interval = match.group(1)
+                    if csv_interval != self.config.INTERVAL:
+                        logger.info(f"Resampling data from {csv_interval} to {self.config.INTERVAL}")
+                        df = CSVDataLoader.resample_to_interval(df, self.config.INTERVAL)
+                
+                # Limit to configured backtest size
+                if len(df) > self.config.BACKTEST_LIMIT:
+                    df = df.tail(self.config.BACKTEST_LIMIT)
+                    logger.info(f"Limited data to last {self.config.BACKTEST_LIMIT} rows")
+                
+            else:
+                logger.info("Fetching data from exchange...")
+                df = self.ta.get_historical_ohlcv(
+                    self.config.SYMBOL, 
+                    self.config.INTERVAL, 
+                    self.config.BACKTEST_LIMIT
+                )
+                
+                if df is None:
+                    logger.error("Failed to fetch exchange data")
+                    return
             
-            if df is None or len(df) < 100:
+            if len(df) < 100:
                 logger.error("Insufficient data for backtest")
                 return
             
+            # Apply indicators
             df = self.ta.apply_indicators(df)
             if df is None:
                 logger.error("Failed to apply indicators for backtest")
                 return
+            
+            # Log backtest parameters
+            logger.info(f"Backtest period: {df.iloc[0]['timestamp']} to {df.iloc[-1]['timestamp']}")
+            logger.info(f"Total bars: {len(df)}")
+            logger.info(f"Symbol: {self.config.SYMBOL if not csv_filepath else 'CSV Data'}")
+            logger.info(f"Interval: {self.config.INTERVAL}")
             
             # Start backtest from a point where indicators are stable
             start_idx = 100
@@ -814,18 +851,19 @@ class TradingBot:
             regime_summary = " | ".join([f"{k}: {v}" for k, v in regime_stats.items()])
             
             results = (f"✅ BACKTEST COMPLETE\n"
-                      f"Initial: ${self.config.INITIAL_CASH:.2f}\n"
-                      f"Final: ${final_value:.2f}\n"
-                      f"Return: {total_return:.2f}%\n"
-                      f"Regime Distribution: {regime_summary}\n\n"
-                      f"📊 PERFORMANCE METRICS:\n"
-                      f"Total Trades: {metrics.get('total_trades', 0)}\n"
-                      f"Win Rate: {metrics.get('win_rate', 0):.2%}\n"
-                      f"Profit Factor: {metrics.get('profit_factor', 0):.2f}\n"
-                      f"Avg Win: ${metrics.get('avg_win', 0):.2f}\n"
-                      f"Avg Loss: ${metrics.get('avg_loss', 0):.2f}\n"
-                      f"Largest Win: ${metrics.get('largest_win', 0):.2f}\n"
-                      f"Largest Loss: ${metrics.get('largest_loss', 0):.2f}")
+                    f"Data Source: {'CSV - ' + os.path.basename(csv_filepath) if csv_filepath else 'Exchange'}\n"
+                    f"Initial: ${self.config.INITIAL_CASH:.2f}\n"
+                    f"Final: ${final_value:.2f}\n"
+                    f"Return: {total_return:.2f}%\n"
+                    f"Regime Distribution: {regime_summary}\n\n"
+                    f"📊 PERFORMANCE METRICS:\n"
+                    f"Total Trades: {metrics.get('total_trades', 0)}\n"
+                    f"Win Rate: {metrics.get('win_rate', 0):.2%}\n"
+                    f"Profit Factor: {metrics.get('profit_factor', 0):.2f}\n"
+                    f"Avg Win: ${metrics.get('avg_win', 0):.2f}\n"
+                    f"Avg Loss: ${metrics.get('avg_loss', 0):.2f}\n"
+                    f"Largest Win: ${metrics.get('largest_win', 0):.2f}\n"
+                    f"Largest Loss: ${metrics.get('largest_loss', 0):.2f}")
             
             logger.info(results)
             self.notifier.send_message(results)

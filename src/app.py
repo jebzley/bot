@@ -1,5 +1,6 @@
 import dotenv
 import os
+import argparse
 
 from logger import logger
 from portfolio import Portfolio
@@ -9,6 +10,17 @@ from bot import TradingBot
 dotenv.load_dotenv()
 
 def main():
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Cryptocurrency Trading Bot')
+    parser.add_argument('--csv', type=str, help='Path to CSV file for backtesting')
+    parser.add_argument('--mode', type=str, choices=['backtest', 'live', 'paper'], 
+                       help='Override trading mode from environment')
+    args = parser.parse_args()
+    
+    # Override mode if specified in command line
+    if args.mode:
+        os.environ['TRADING_MODE'] = args.mode
+    
     exchange = HyperliquidExchange()
     exchange.init_exchange()
     if not exchange.hyperliquid:
@@ -26,7 +38,8 @@ def main():
         mode = os.getenv("TRADING_MODE", "backtest").lower()
         
         if mode == 'backtest':
-            bot.backtest()
+            # Pass CSV file if provided
+            bot.backtest(csv_filepath=args.csv)
         else:
             bot.start_trading()
             
